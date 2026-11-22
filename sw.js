@@ -1,7 +1,7 @@
 /* CourtFit service worker: keeps the app usable with no signal.
    Data requests to Supabase are never cached here; the app keeps its own
    saved copy of the data. */
-const CACHE = 'courtfit-shell-v9';
+const CACHE = 'courtfit-shell-v10';
 const SHELL = [
   './',
   './index.html',

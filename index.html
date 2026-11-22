@@ -412,8 +412,23 @@ i.mp { background: #f7a3c7; } i.mc { background: #d3b8f5; } i.mf { background: #
 .setrow.done .sn { background: transparent; }
 .setrow .prev { text-align: center; color: var(--muted); font-size: .78rem; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .setrow input { height: 38px; padding: 0 4px; text-align: center; font-weight: 700; border-radius: 9px; background: #fff8fb; }
-.setrow input::placeholder { color: rgba(185, 161, 174, .55); font-weight: 600; }
+.setrow input::placeholder { color: rgba(138, 97, 119, .45); font-weight: 600; }
 .setrow.done input { background: transparent; border-color: transparent; }
+.setrow input[readonly] { cursor: pointer; caret-color: transparent; }
+.setrow input.kpon { border: 2px solid var(--pink); background: #fff; box-shadow: 0 0 0 3px rgba(240, 130, 180, .18); }
+.kpad { position: fixed; z-index: 60; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(3, 1fr) 1.05fr; gap: 7px;
+  padding: 9px 8px calc(9px + env(safe-area-inset-bottom, 0px)); background: var(--glass); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+  border-top: 1px solid var(--line); box-shadow: 0 -10px 26px rgba(200, 80, 138, .12); animation: kpup .18s ease-out; }
+.kpad[hidden] { display: none; }
+.kpad .kpk { min-height: 52px; border-radius: 13px; border: 0; background: var(--surface); color: var(--ink); font: 600 1.45rem/1 var(--f-body); box-shadow: 0 1px 0 rgba(200, 80, 138, .14); }
+.kpad .kpk:active { background: var(--raised); transform: scale(.97); }
+.kpad .kpk.fn { background: var(--chip); color: var(--pink); }
+.kpad .kpk.dot { background: transparent; box-shadow: none; font-size: 1.7rem; }
+.kpad .kpk.dot:disabled { opacity: .25; }
+.kpad .kpk.go { background: var(--grad); color: var(--on-accent); }
+.kpad .kpk .ic { width: 24px; height: 24px; }
+body.kp-open #app { padding-bottom: 300px; }
+@keyframes kpup { from { transform: translateY(100%); } to { transform: none; } }
 .setrow .ck { min-height: 38px; padding: 0; border: 0; border-radius: 9px; background: var(--chip); color: var(--muted); }
 .setrow .ck .ic { width: 20px; height: 20px; }
 .setrow.done .ck { background: var(--grad); color: var(--on-accent); animation: pop .3s ease; }
@@ -486,6 +501,9 @@ i.mp { background: #f7a3c7; } i.mc { background: #d3b8f5; } i.mf { background: #
     <symbol id="i-dumbbell" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6.5 6.5v11M17.5 6.5v11M3.5 9.5v5M20.5 9.5v5M6.5 12h11"/></g></symbol>
     <symbol id="i-list" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></g></symbol>
     <symbol id="i-user" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></g></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M5 12h14"/></symbol>
+    <symbol id="i-bksp" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h11v14H9l-6-7z"/><path d="m12 9.5 5 5M17 9.5l-5 5"/></g></symbol>
+    <symbol id="i-kbdown" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3.5" width="18" height="12" rx="2.5"/><path d="M7 7.5h.01M10.5 7.5h.01M14 7.5h.01M17.5 7.5h.01M7 11.5h10M9 19l3 2.5 3-2.5"/></g></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" d="m5 12 5 5 9-10"/></symbol>
     <symbol id="i-back" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="m15 5-7 7 7 7"/></symbol>
@@ -532,9 +550,9 @@ i.mp { background: #f7a3c7; } i.mc { background: #d3b8f5; } i.mf { background: #
 <div id="installslot"></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="config.js?v=9"></script>
-<script src="library.js?v=9"></script>
+<script src="config.js?v=10"></script>
+<script src="library.js?v=10"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>

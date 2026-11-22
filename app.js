@@ -125,6 +125,7 @@
   }
   const historyFor = (exerciseId) => finished().flatMap(w => (w.exercises || []).filter(e => e.exerciseId === exerciseId && doneSets(e).length).map(entry => ({ entry, w })));
   const setLabel = (sets, i) => { const k = sets[i].kind; if (k === 'warmup') return 'W'; if (k === 'drop') return 'D'; if (k === 'failure') return 'F'; return String(sets.slice(0, i + 1).filter(s => !s.kind || s.kind === 'normal').length); };
+  const KP = { pad: null, inp: null, key: null, buf: '', fresh: false }; // number pad state
   const firstNum = (t) => { const m = String(t || '').match(/\d+/); return m ? Number(m[0]) : null; };
   const sortedRoutines = () => [...S.routines].sort((a, b) => (a.order ?? a.created ?? 0) - (b.order ?? b.created ?? 0));
 
@@ -272,6 +273,7 @@
     if (S.loaded) { clearTimeout(S.badgeTimer); S.badgeTimer = setTimeout(checkAchievements, 700); }
     if (!force) window.scrollTo(0, y);
     updateChrome();
+    if (KP.key) kpReattach();
   }
   $app.addEventListener('focusout', () => setTimeout(() => { if (S.pendingRender && S.view.name !== 'active') render(); }, 0));
   const msg = (t, p) => h('div', { class: 'empty', style: 'margin-top:12vh' }, h('h2', { text: t }), h('p', { text: p }));
@@ -1788,8 +1790,7 @@
   }
   function startRoutine(r) {
     startWorkout(r.name, (r.items || []).filter(i => findEx(i.exerciseId)).map(it => {
-      const prev = previousSets(it.exerciseId);
-      return { exerciseId: it.exerciseId, group: it.group || null, notes: '', sets: (it.sets || [{}]).map((s, i) => newSet(s.weight || prev[i]?.weight || null, null, 'normal', s.reps || '')) };
+      return { exerciseId: it.exerciseId, group: it.group || null, notes: '', sets: (it.sets || [{}]).map((s) => ({ ...newSet(null, null, 'normal', s.reps || ''), hint: s.weight || null })) };
     }), r.id);
   }
   function addExercises(ids) {
@@ -1860,7 +1861,7 @@
       cue ? h('div', { class: 'cue' + (cue.up ? ' up' : '') }, icon(cue.up ? 'up' : 'repeat', 'ic sm'), h('span', { text: cue.text })) : null,
       h('div', { class: 'sethd', 'aria-hidden': 'true' }, h('span', { text: 'SET' }), h('span', { text: 'PREVIOUS' }), h('span', { text: unit().toUpperCase() }), h('span', { text: 'REPS' }), h('span', { text: '✓' })),
       h('div', { class: 'stack', style: 'gap:6px' }, e.sets.map((s, si) => setRow(e, s, si, prev[si], histBest))),
-      h('button', { type: 'button', class: 'soft', style: 'width:100%;margin-top:10px', onclick: () => { const l = e.sets[e.sets.length - 1]; e.sets.push(newSet(l?.weight, l?.reps, 'normal', l?.target)); saveActive(); render(true); } }, icon('plus', 'ic sm'), 'Add Set'));
+      h('button', { type: 'button', class: 'soft', style: 'width:100%;margin-top:10px', onclick: () => { const l = e.sets[e.sets.length - 1]; e.sets.push({ ...newSet(null, null, 'normal', l?.target), hint: l?.weight ?? l?.hint ?? null, hintReps: l?.reps ?? l?.hintReps ?? null }); saveActive(); render(true); } }, icon('plus', 'ic sm'), 'Add Set'));
     return card;
   }
   // Progress cue for an exercise, based on last time. With a rep range (from a routine),
@@ -1881,12 +1882,20 @@
     const isPR = !!(s.done && histBest > 0 && e1rm(s) > histBest + 0.01);
     const label = setLabel(e.sets, si);
     const prevText = p ? `${fw(p.weight)}×${p.reps || 0}` : '—';
-    const wIn = h('input', { inputmode: 'decimal', enterkeyhint: 'next', autocomplete: 'off', 'aria-label': `Set ${label} weight in ${unit()}`, placeholder: p ? fw(p.weight) : '0', value: s.weight != null ? fw(s.weight) : '',
-      onfocus: (ev) => ev.target.select(),
-      oninput: (ev) => { const v = parseFloat(ev.target.value.replace(',', '.')); s.weight = isFinite(v) ? store(v) : null; saveActive(); refreshTally(); } });
-    const rIn = h('input', { inputmode: 'numeric', pattern: '[0-9]*', enterkeyhint: 'done', autocomplete: 'off', 'aria-label': `Set ${label} reps`, placeholder: s.target || (p ? String(p.reps || 0) : '0'), value: s.reps != null ? String(s.reps) : '',
-      onfocus: (ev) => ev.target.select(),
-      oninput: (ev) => { const v = parseInt(ev.target.value, 10); s.reps = isFinite(v) ? v : null; saveActive(); refreshTally(); } });
+    // Gray hint = last time's numbers (or the routine's). Typing replaces it; leaving it
+    // untouched and tapping the check uses the hint as the set's value.
+    const hintW = p ? p.weight : s.hint ?? null;
+    const hintR = firstNum(s.target) ?? (p ? p.reps : s.hintReps ?? null);
+    const ei = S.active.exercises.indexOf(e);
+    const wIn = h('input', { readonly: '', inputmode: 'none', autocomplete: 'off', 'data-kp': `${ei}-${si}-w`, 'aria-label': `Set ${label} weight in ${unit()}`,
+      placeholder: hintW != null ? fw(hintW) : '0', value: s.weight != null ? fw(s.weight) : '' });
+    wIn._kp = { decimal: true, step: isKg() ? 2.5 : 5, hint: () => (hintW != null ? Number(fw(hintW)) || 0 : 0),
+      set: (t) => { const v = parseFloat(t); s.weight = isFinite(v) ? store(v) : null; saveActive(); refreshTally(); } };
+    const rIn = h('input', { readonly: '', inputmode: 'none', autocomplete: 'off', 'data-kp': `${ei}-${si}-r`, 'aria-label': `Set ${label} reps`,
+      placeholder: s.target || (hintR != null ? String(hintR) : '0'), value: s.reps != null ? String(s.reps) : '' });
+    rIn._kp = { decimal: false, step: 1, hint: () => hintR || 0,
+      set: (t) => { const v = parseInt(t, 10); s.reps = isFinite(v) ? v : null; saveActive(); refreshTally(); } };
+    for (const el of [wIn, rIn]) { el.addEventListener('pointerdown', (ev) => ev.preventDefault()); el.addEventListener('click', () => kpOpen(el)); }
     const row = h('div', { class: 'setrow' + (s.done ? ' done' : '') + (isPR ? ' pr' : '') },
       isPR ? h('span', { class: 'prbadge', text: 'PR' }) : null,
       h('button', { type: 'button', class: 'sn ' + (s.kind || 'normal'), 'aria-label': `Set ${label} options`, onclick: () => actions('Set type', [
@@ -1896,8 +1905,8 @@
       wIn, rIn,
       h('button', { type: 'button', class: 'ck', 'aria-pressed': String(!!s.done), 'aria-label': s.done ? 'Completed. Tap to undo' : 'Mark set complete', onclick: () => {
         if (s.done) { s.done = false; saveActive(); render(true); return; }
-        if (s.weight == null && p) s.weight = p.weight;
-        if (s.reps == null) s.reps = firstNum(s.target) ?? (p ? p.reps : null);
+        if (s.weight == null) s.weight = hintW;
+        if (s.reps == null) s.reps = hintR;
         s.done = true;
         if (isLive(S.active) && restSecs() > 0 && endsRound(S.active.exercises, e)) { S.active.restEnd = Date.now() + restSecs() * 1000; S.active.restDur = restSecs() * 1000; }
         unlockAudio();
@@ -1926,6 +1935,82 @@
     };
     row.addEventListener('pointerup', end); row.addEventListener('pointercancel', end);
     return wrap;
+  }
+  // ---------- number pad for set weight/reps (replaces the phone keyboard) ----------
+  function kpBuild() {
+    const k = (label, fn, cls = '', aria) => h('button', { type: 'button', class: 'kpk ' + cls, 'aria-label': aria || label, onclick: fn }, label);
+    const dig = (d) => k(d, () => kpType(d));
+    KP.pad = h('div', { class: 'kpad', role: 'group', 'aria-label': 'Number pad', hidden: '' },
+      dig('1'), dig('2'), dig('3'), k(icon('kbdown'), kpClose, 'fn', 'Hide number pad'),
+      dig('4'), dig('5'), dig('6'), k(icon('plus'), () => kpStep(1), 'fn', 'Increase'),
+      dig('7'), dig('8'), dig('9'), k(icon('minus'), () => kpStep(-1), 'fn', 'Decrease'),
+      k('.', () => kpType('.'), 'dot', 'Decimal point'), dig('0'), k(icon('bksp'), kpBack, 'fn', 'Delete'), k(icon('next'), kpNext, 'go', 'Next box'));
+    KP.pad.addEventListener('pointerdown', (ev) => ev.preventDefault());
+    document.body.append(KP.pad);
+    document.addEventListener('pointerdown', (ev) => {
+      if (!KP.inp || ev.target.closest('.kpad, [data-kp], .setrow .ck')) return;
+      kpClose();
+    }, true);
+    document.addEventListener('keydown', (ev) => {
+      if (!KP.inp) return;
+      if (/^[0-9]$/.test(ev.key) || ev.key === '.') kpType(ev.key);
+      else if (ev.key === 'Backspace') kpBack();
+      else if (ev.key === 'Enter' || ev.key === 'Tab') kpNext();
+      else if (ev.key === 'Escape') kpClose();
+      else return;
+      ev.preventDefault();
+    });
+  }
+  function kpOpen(inp) {
+    if (!KP.pad) kpBuild();
+    if (KP.inp) KP.inp.classList.remove('kpon');
+    KP.inp = inp; KP.key = inp.dataset.kp; KP.buf = inp.value; KP.fresh = true;
+    inp.classList.add('kpon');
+    KP.pad.querySelector('.dot').disabled = !inp._kp.decimal;
+    KP.pad.hidden = false; document.body.classList.add('kp-open');
+    requestAnimationFrame(() => {
+      const r = inp.getBoundingClientRect(), top = KP.pad.getBoundingClientRect().top;
+      if (r.bottom > top - 12) window.scrollBy({ top: r.bottom - top + 60, behavior: 'smooth' });
+      else if (r.top < 70) window.scrollBy({ top: r.top - 90, behavior: 'smooth' });
+    });
+  }
+  function kpClose() {
+    if (KP.inp) KP.inp.classList.remove('kpon');
+    KP.inp = null; KP.key = null;
+    if (KP.pad) KP.pad.hidden = true;
+    document.body.classList.remove('kp-open');
+  }
+  function kpApply() { KP.inp.value = KP.buf; KP.inp._kp.set(KP.buf); }
+  // First key after opening a box replaces what's there (or the gray hint); later keys add on.
+  function kpType(d) {
+    if (!KP.inp) return;
+    if (d === '.' && !KP.inp._kp.decimal) return;
+    let b = KP.fresh ? '' : KP.buf;
+    KP.fresh = false;
+    if (d === '.') { if (b.includes('.')) return; b = (b || '0') + '.'; }
+    else if (b === '0') b = d;
+    else b += d;
+    if (b.replace('.', '').length > 6) return;
+    KP.buf = b; kpApply();
+  }
+  function kpBack() { if (!KP.inp) return; KP.fresh = false; KP.buf = KP.buf.slice(0, -1); kpApply(); }
+  // + / − nudge from the current number, or from the gray hint if the box is empty.
+  function kpStep(dir) {
+    if (!KP.inp) return;
+    const c = KP.inp._kp, cur = parseFloat(KP.buf);
+    const v = Math.max(0, Math.round(((isFinite(cur) ? cur : c.hint()) + dir * c.step) * 100) / 100);
+    KP.buf = String(v); KP.fresh = true; kpApply();
+  }
+  function kpNext() {
+    if (!KP.inp) return;
+    const all = [...document.querySelectorAll('[data-kp]')].filter(el => !el.closest('.setrow.done'));
+    const i = all.indexOf(KP.inp);
+    if (i >= 0 && all[i + 1]) kpOpen(all[i + 1]); else kpClose();
+  }
+  // After the workout screen redraws (e.g. a set is checked), keep the pad on the same box.
+  function kpReattach() {
+    const el = document.querySelector(`[data-kp="${KP.key}"]`);
+    if (el && !el.closest('.setrow.done')) kpOpen(el); else kpClose();
   }
   async function finishWorkout() {
     const w = S.active;
