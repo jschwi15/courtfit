@@ -403,7 +403,9 @@ i.mp { background: #f7a3c7; } i.mc { background: #d3b8f5; } i.mf { background: #
 .sethd, .setrow { display: grid; grid-template-columns: 40px minmax(0, 1fr) 68px 56px 46px; gap: 7px; align-items: center; }
 .sethd { font-size: .64rem; font-weight: 700; letter-spacing: .08em; color: var(--muted); text-align: center; margin: 4px 0 2px; }
 .setwrap { position: relative; overflow: hidden; border-radius: 12px; }
-.setwrap .swipeback { position: absolute; inset: 0; border-radius: 12px; background: var(--bad); color: #fff; display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding-right: 16px; font-weight: 700; font-size: .85rem; }
+.setwrap .swipeback { position: absolute; inset: 0; border-radius: 12px; background: var(--bad); color: #fff; display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding-right: 16px; font-weight: 700; font-size: .85rem; transition: filter .15s ease; }
+.setwrap .swipeback.fromleft { justify-content: flex-start; padding-right: 0; padding-left: 16px; }
+.setwrap .swipeback.ready { filter: brightness(.88); }
 .setrow { position: relative; padding: 4px; border-radius: 12px; background: var(--surface); touch-action: pan-y; transition: transform .25s ease, background-color .2s ease; }
 .setrow.dragging { transition: none; }
 .setrow.done { background: #fde3ef; }
@@ -550,9 +552,9 @@ body.kp-open #app { padding-bottom: 300px; }
 <div id="installslot"></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="config.js?v=10"></script>
-<script src="library.js?v=10"></script>
+<script src="config.js?v=11"></script>
+<script src="library.js?v=11"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
-<script src="app.js?v=10"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>

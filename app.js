@@ -1913,27 +1913,42 @@
         if (navigator.vibrate) navigator.vibrate(15);
         saveActive(); render(true);
       } }, icon('check')));
-    // Swipe a set left to delete it.
-    const wrap = h('div', { class: 'setwrap' }, h('div', { class: 'swipeback', 'aria-hidden': 'true' }, icon('trash', 'ic sm'), 'Delete'), row);
-    let x0 = null, y0 = null, dx = 0, locked = null;
-    row.addEventListener('pointerdown', (ev) => { if (ev.pointerType === 'mouse' || ev.target.closest('button, input')) return; x0 = ev.clientX; y0 = ev.clientY; dx = 0; locked = null; });
+    // Swipe a set either way, starting anywhere on the row (boxes included), to delete it.
+    // A plain tap still opens the number pad or ticks the set.
+    const back = h('div', { class: 'swipeback', 'aria-hidden': 'true' }, icon('trash', 'ic sm'), 'Delete');
+    const wrap = h('div', { class: 'setwrap' }, back, row);
+    let x0 = null, y0 = null, dx = 0, locked = null, swiped = false;
+    row.addEventListener('pointerdown', (ev) => { if (ev.pointerType === 'mouse') return; x0 = ev.clientX; y0 = ev.clientY; dx = 0; locked = null; swiped = false; });
     row.addEventListener('pointermove', (ev) => {
       if (x0 == null) return;
       const mx = ev.clientX - x0, my = ev.clientY - y0;
-      if (locked == null && (Math.abs(mx) > 8 || Math.abs(my) > 8)) locked = Math.abs(mx) > Math.abs(my) ? 'x' : 'y';
+      if (locked == null && (Math.abs(mx) > 10 || Math.abs(my) > 10)) {
+        locked = Math.abs(mx) > Math.abs(my) ? 'x' : 'y';
+        if (locked === 'x') { swiped = true; try { row.setPointerCapture(ev.pointerId); } catch {} }
+      }
       if (locked !== 'x') return;
-      dx = Math.min(0, Math.max(-160, mx));
+      dx = Math.max(-170, Math.min(170, mx));
+      back.classList.toggle('fromleft', dx > 0);
+      back.classList.toggle('ready', Math.abs(dx) > 100);
       row.classList.add('dragging'); row.style.transform = `translateX(${dx}px)`;
     });
     const end = () => {
       if (x0 == null) return;
       row.classList.remove('dragging');
-      const fire = locked === 'x' && dx < -100;
-      row.style.transform = '';
+      const fire = locked === 'x' && Math.abs(dx) > 100;
+      row.style.transform = fire ? `translateX(${dx > 0 ? 110 : -110}%)` : '';
       x0 = null; locked = null;
-      if (fire) { if (navigator.vibrate) navigator.vibrate(12); e.sets.splice(si, 1); saveActive(); render(true); }
+      if (fire) {
+        if (navigator.vibrate) navigator.vibrate(12);
+        setTimeout(() => {
+          const gone = e.sets.splice(si, 1)[0]; saveActive(); render(true);
+          toast(`Set ${label} removed`, { label: 'Undo', run: () => { e.sets.splice(Math.min(si, e.sets.length), 0, gone); saveActive(); render(true); } });
+        }, 160);
+      }
     };
     row.addEventListener('pointerup', end); row.addEventListener('pointercancel', end);
+    // A swipe that started on a box or the check shouldn't also count as a tap on it.
+    row.addEventListener('click', (ev) => { if (swiped) { ev.stopPropagation(); ev.preventDefault(); swiped = false; } }, true);
     return wrap;
   }
   // ---------- number pad for set weight/reps (replaces the phone keyboard) ----------
