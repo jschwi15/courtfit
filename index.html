@@ -105,7 +105,7 @@ label.f > span { text-transform: uppercase; letter-spacing: .1em; font-size: .68
 
 /* Bottom tab bar */
 .tabbar { position: fixed; z-index: 20; left: max(10px, env(safe-area-inset-left, 0px)); right: max(10px, env(safe-area-inset-right, 0px)); bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-  max-width: 480px; margin: 0 auto; height: var(--tabbar-h); border-radius: 26px; display: grid; grid-template-columns: repeat(4, 1fr); align-items: center; padding: 0 6px; gap: 2px;
+  max-width: 540px; margin: 0 auto; height: var(--tabbar-h); border-radius: 26px; display: grid; grid-template-columns: repeat(5, 1fr); align-items: center; padding: 0 5px; gap: 1px;
   background: var(--glass); border: 1px solid var(--line); backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%); box-shadow: 0 12px 30px rgba(0, 0, 0, .35); }
 .tabbar a { position: relative; display: grid; justify-items: center; gap: 3px; color: var(--muted); text-decoration: none; font-size: .68rem; font-weight: 600; padding: 8px 0; min-height: 56px; align-content: center; transition: color .2s ease; }
 .tabbar a { border-radius: 20px; min-height: 56px; }
@@ -261,6 +261,46 @@ table.pg { border-collapse: separate; border-spacing: 0; font-size: .78rem; min-
 .pg .cells i { font-style: normal; min-width: 25px; padding: 4px 3px; border-radius: 6px; background: var(--chip); color: var(--muted); }
 .pg .cells i.f { background: rgba(255, 92, 158, .18); color: var(--ink); font-weight: 700; }
 
+/* Macros */
+.daynav { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
+.daylabel { flex: 1; display: grid; justify-items: center; gap: 2px; background: none; border: 0; min-height: 52px; padding: 4px; }
+.daylabel b { font: 700 1.15rem/1.1 var(--f-display); }
+.daylabel small { color: var(--muted); font-size: .76rem; font-weight: 500; }
+.msum { display: grid; grid-template-columns: 116px minmax(0, 1fr); gap: 16px; align-items: center; }
+.ringwrap { position: relative; width: 116px; height: 116px; }
+.ring { width: 116px; height: 116px; display: block; }
+.ringtxt { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+.ringtxt b { font: 800 1.45rem/1 var(--f-display); }
+.ringtxt span { font-size: .7rem; color: var(--muted); margin-top: 3px; }
+.mleft { font: 700 1rem/1.2 var(--f-display); margin-bottom: 4px; }
+.mleft.over { color: var(--warn); }
+.mbar { margin: 7px 0; }
+.mtop { display: flex; justify-content: space-between; gap: 6px; font-size: .78rem; color: var(--muted); }
+.mtop b { color: var(--ink); font-weight: 600; white-space: nowrap; }
+.mbar .tr { height: 8px; border-radius: 4px; background: var(--chip); overflow: hidden; margin-top: 4px; }
+.mbar .tr i { display: block; height: 100%; border-radius: 4px; transition: width .6s ease; }
+i.mp { background: #ff5c9e; } i.mc { background: #c08cff; } i.mf { background: #ffb199; }
+.mcard { display: flex; gap: 12px; align-items: center; justify-content: flex-start; width: 100%; text-align: left; padding: 10px 12px 10px 10px; background: var(--surface); border-radius: 16px; font-weight: 400; min-height: 80px; }
+.mthumb { width: 60px; height: 60px; border-radius: 12px; object-fit: cover; flex: none; }
+.mthumb.ph { display: grid; place-items: center; background: rgba(255, 92, 158, .12); color: var(--pink); }
+.mcard .grow { flex: 1; min-width: 0; }
+.mcard .t { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcard .s { display: block; font-size: .8rem; color: var(--muted); }
+.mchips { display: flex; gap: 5px; margin-top: 5px; flex-wrap: wrap; }
+.mchips i { font-style: normal; font-size: .7rem; font-weight: 700; padding: 2px 7px; border-radius: 999px; color: var(--on-accent); }
+.photozone { position: relative; display: grid; place-items: center; align-content: center; gap: 6px; min-height: 160px; border: 1.5px dashed rgba(255, 196, 222, .25); border-radius: 16px; color: var(--muted); cursor: pointer; overflow: hidden; text-align: center; padding: 0; }
+.photozone .ic { width: 30px; height: 30px; color: var(--pink); }
+.photozone img { width: 100%; max-height: 320px; object-fit: cover; display: block; }
+.photozone .zonebtns { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; justify-content: space-between; gap: 8px; }
+.photozone .zonebtns .small { background: rgba(18, 10, 15, .75); }
+.mgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.mgrid input { padding: 11px 6px; text-align: center; }
+.fullphoto { width: 100%; border-radius: 14px; display: block; min-height: 140px; max-height: 60vh; object-fit: contain; background: var(--chip); }
+.recent { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.recent::-webkit-scrollbar { display: none; }
+.recent button { flex: none; font-size: .82rem; min-height: 36px; padding: 6px 12px; border-radius: 999px; background: var(--chip); border-color: transparent; }
+.seg button { padding: 9px 4px; font-size: .82rem; }
+
 /* Active workout */
 .nameinput { font: 800 1.45rem/1.2 var(--f-display); background: transparent; border: 0; padding: 0; border-radius: 0; }
 .nameinput:focus { border: 0; }
@@ -385,6 +425,9 @@ table.pg { border-collapse: separate; border-spacing: 0; font-size: .78rem; min-
     <symbol id="i-back-m" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3v18"/><path d="M7 6c-2.5 4-2.5 8 0 12M17 6c2.5 4 2.5 8 0 12"/></g></symbol>
     <symbol id="i-core" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="7" y="3.5" width="10" height="17" rx="4"/><path d="M12 3.5v17M7 9.5h10M7 14.5h10"/></g></symbol>
     <symbol id="i-arm" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19c1-6 4-10 8-10 2.5 0 4 1.5 4 3.5S14 16 12 15"/><path d="M4 19h13"/></g></symbol>
+    <symbol id="i-pie" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M11 4a8 8 0 1 0 9 9h-9z"/><path d="M14 2.5a8 8 0 0 1 7.5 7.5H14z"/></g></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3.5 8h3.5l2-2.5h6L17 8h3.5v11h-17z"/><circle cx="12" cy="13.3" r="3.6"/></g></symbol>
+    <symbol id="i-plate" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4.5"/></g></symbol>
   </defs>
 </svg>
 <main class="wrap" id="app">
@@ -394,15 +437,16 @@ table.pg { border-collapse: separate; border-spacing: 0; font-size: .78rem; min-
   <a href="#" data-tab="home"><svg class="ic" aria-hidden="true"><use href="#i-home"/></svg>Home</a>
   <a href="#workout" data-tab="workout"><svg class="ic" aria-hidden="true"><use href="#i-dumbbell"/></svg>Workout</a>
   <a href="#strongher" data-tab="strongher"><svg class="ic" aria-hidden="true"><use href="#i-heart"/></svg>StrongHER</a>
+  <a href="#macros" data-tab="macros"><svg class="ic" aria-hidden="true"><use href="#i-pie"/></svg>Macros</a>
   <a href="#profile" data-tab="profile"><svg class="ic" aria-hidden="true"><use href="#i-user"/></svg>Profile</a>
 </nav>
 <div id="liveslot"></div>
 <div id="installslot"></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="config.js?v=5"></script>
-<script src="library.js?v=5"></script>
+<script src="config.js?v=6"></script>
+<script src="library.js?v=6"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

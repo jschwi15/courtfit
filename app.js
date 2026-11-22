@@ -25,7 +25,8 @@
     loaded: false, offline: false, outbox: [], view: { name: 'home' }, pendingRender: false,
     search: '', muscle: null, exMetric: 'heaviest', profMetric: 'workouts', rMetric: 'volume',
     calMonth: firstOfMonth(Date.now()), routinesOpen: true,
-    progId: null, progWorkout: 'A', progWeek: null, progMode: 'week'
+    progId: null, progWorkout: 'A', progWeek: null, progMode: 'week',
+    meals: [], mDate: null, thumbs: {}, images: {}
   };
 
   // ---------- helpers ----------
@@ -127,19 +128,21 @@
   const sortedRoutines = () => [...S.routines].sort((a, b) => (a.order ?? a.created ?? 0) - (b.order ?? b.created ?? 0));
 
   // ---------- data: Supabase + offline outbox + undo ----------
-  const TABLES = ['exercises', 'routines', 'workouts', 'programs'];
+  // meal_photos is not a list table: photos are fetched only when a day is shown.
+  const TABLES = ['exercises', 'routines', 'workouts', 'programs', 'meals'];
   const listOf = (t) => S[t];
   const setList = (t, arr) => { S[t] = arr; };
   const toRow = (t, obj) => { const data = clone(obj); delete data.id; return { id: obj.id, data }; };
   const fromRow = (t, r) => ({ ...(r.data || {}), id: r.id });
   function applyLocal(op) {
+    if (!TABLES.includes(op.table)) return;
     const arr = listOf(op.table).filter(x => x.id !== (op.op === 'put' ? op.row.id : op.id));
     if (op.op === 'put') arr.push(fromRow(op.table, op.row));
     setList(op.table, arr);
   }
-  function saveCache() { ls.set('cf-cache', JSON.stringify({ exercises: S.exercises, routines: S.routines, workouts: S.workouts, programs: S.programs, at: Date.now() })); }
+  function saveCache() { ls.set('cf-cache', JSON.stringify({ exercises: S.exercises, routines: S.routines, workouts: S.workouts, programs: S.programs, meals: S.meals, at: Date.now() })); }
   function loadCache() {
-    try { const c = JSON.parse(ls.get('cf-cache') || 'null'); if (c) { S.exercises = c.exercises || []; S.routines = c.routines || []; S.workouts = c.workouts || []; S.programs = c.programs || []; return true; } } catch { }
+    try { const c = JSON.parse(ls.get('cf-cache') || 'null'); if (c) { S.exercises = c.exercises || []; S.routines = c.routines || []; S.workouts = c.workouts || []; S.programs = c.programs || []; S.meals = c.meals || []; return true; } } catch { }
     return false;
   }
   const saveOutbox = () => ls.set('cf-outbox', JSON.stringify(S.outbox));
@@ -219,6 +222,7 @@
     if (s === 'workout') return { name: 'workout' };
     if (s === 'profile') return { name: 'profile' };
     if (s === 'strongher') return { name: 'strongher' };
+    if (s === 'macros') return { name: 'macros' };
     if (s === 'exercises') return { name: 'exercises' };
     if (s === 'settings') return { name: 'settings' };
     if (s === 'active') return { name: 'active' };
@@ -257,6 +261,7 @@
     else if (v.name === 'wdetail') node = workoutDetail(v.id);
     else if (v.name === 'profile') node = profileView();
     else if (v.name === 'strongher') node = programView();
+    else if (v.name === 'macros') node = macrosView();
     else if (v.name === 'settings') node = settingsView();
     else node = homeView();
     const banner = S.offline ? h('div', { class: 'banner' },
@@ -277,6 +282,7 @@
     if (['workout', 'routine', 'active'].includes(v.name)) return 'workout';
     if (['profile', 'exercises', 'exercise', 'settings'].includes(v.name)) return 'profile';
     if (v.name === 'strongher') return 'strongher';
+    if (v.name === 'macros') return 'macros';
     return 'home';
   }
   function updateChrome() {
@@ -969,6 +975,322 @@
       { tall: true, right: save });
   }
 
+  // ---------- Macros: food log with photos ----------
+  // meals rows: { date: 'YYYY-MM-DD', at, meal, name, cal, p, c, f, notes, hasPhoto, by }.
+  // meal_photos rows (same id as the meal): { thumb, image } as compressed JPEG data URLs.
+  const MEALS = ['Breakfast', 'Lunch', 'Dinner', 'Snack'];
+  const mealByTime = () => { const hr = new Date().getHours(); return hr < 10 ? 'Breakfast' : hr < 14 ? 'Lunch' : hr < 16 ? 'Snack' : hr < 21 ? 'Dinner' : 'Snack'; };
+  function goals() {
+    let g = {}; try { g = JSON.parse(ls.get('cf-goals') || '{}'); } catch { }
+    return { cal: 1800, p: 130, c: 180, f: 60, ...g };
+  }
+  const numv = (v) => { const n = parseFloat(String(v ?? '').replace(',', '.')); return isFinite(n) ? n : 0; };
+  const fmt1 = (v) => num1(numv(v));
+  const mealCal = (m) => numv(m.cal) > 0 ? numv(m.cal) : Math.round(4 * numv(m.p) + 4 * numv(m.c) + 9 * numv(m.f));
+  const dayMeals = (d) => S.meals.filter(m => m.date === d).sort((a, b) => (a.at || 0) - (b.at || 0));
+  const totals = (list) => list.reduce((t, m) => ({ cal: t.cal + mealCal(m), p: t.p + numv(m.p), c: t.c + numv(m.c), f: t.f + numv(m.f) }), { cal: 0, p: 0, c: 0, f: 0 });
+  const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const shiftDay = (iso, n) => { const d = new Date(iso + 'T00:00'); d.setDate(d.getDate() + n); return isoOf(d); };
+
+  // Photos: shrink on the phone before upload (big image ~1280px, square thumbnail 240px).
+  function loadImage(file) {
+    return new Promise((res, rej) => {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => { res(img); setTimeout(() => URL.revokeObjectURL(url), 1000); };
+      img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('Could not read that photo')); };
+      img.src = url;
+    });
+  }
+  function shrinkImage(img, max, q) {
+    const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * s); c.height = Math.round(img.naturalHeight * s);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', q);
+  }
+  function squareThumb(img, size) {
+    const c = document.createElement('canvas'); c.width = c.height = size;
+    const m = Math.min(img.naturalWidth, img.naturalHeight);
+    c.getContext('2d').drawImage(img, (img.naturalWidth - m) / 2, (img.naturalHeight - m) / 2, m, m, 0, 0, size, size);
+    return c.toDataURL('image/jpeg', 0.75);
+  }
+  async function savePhoto(id, thumb, image) {
+    S.thumbs[id] = thumb; S.images[id] = image;
+    if (S.sb) await send({ op: 'put', table: 'meal_photos', row: { id, thumb, image } });
+  }
+  async function deletePhoto(id) {
+    delete S.thumbs[id]; delete S.images[id];
+    if (S.sb) await send({ op: 'del', table: 'meal_photos', id });
+  }
+  let thumbReq = false;
+  function wantThumbs(ids) {
+    const missing = ids.filter(id => !(id in S.thumbs));
+    if (!missing.length || !S.sb || thumbReq) return;
+    thumbReq = true;
+    S.sb.from('meal_photos').select('id,thumb').in('id', missing).then(({ data, error }) => {
+      thumbReq = false;
+      if (error) return;
+      for (const id of missing) S.thumbs[id] = null;
+      for (const r of data || []) S.thumbs[r.id] = r.thumb;
+      render();
+    }, () => { thumbReq = false; });
+  }
+  async function getImage(id) {
+    if (S.images[id]) return S.images[id];
+    if (!S.sb) return null;
+    const { data } = await S.sb.from('meal_photos').select('image').eq('id', id).maybeSingle();
+    if (data) S.images[id] = data.image;
+    return data ? data.image : null;
+  }
+
+  function macrosView() {
+    const d = S.mDate || todayISO();
+    const list = dayMeals(d);
+    const t = totals(list), g = goals();
+    wantThumbs(list.filter(m => m.hasPhoto).map(m => m.id));
+    const today = todayISO();
+    const label = d === today ? 'Today' : d === shiftDay(today, -1) ? 'Yesterday' : new Date(d + 'T00:00').toLocaleDateString(undefined, { weekday: 'long' });
+    const dateIn = h('input', { type: 'date', class: 'sr', value: d, max: today, 'aria-label': 'Pick a date', onchange: (e) => { if (e.target.value) { S.mDate = e.target.value; render(true); } } });
+    return h('div', null,
+      topbar(h('h1', { text: 'Macros' }), h('span', { class: 'spacer' }),
+        h('button', { type: 'button', class: 'small', onclick: exportSheet }, icon('share', 'ic sm'), 'Export'),
+        h('button', { type: 'button', class: 'small', onclick: goalsSheet }, icon('gear', 'ic sm'), 'Goals')),
+      h('div', { class: 'daynav' },
+        h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Previous day', onclick: () => { S.mDate = shiftDay(d, -1); render(true); } }, icon('back')),
+        h('button', { type: 'button', class: 'daylabel', 'aria-label': 'Pick a date', onclick: () => { try { dateIn.showPicker(); } catch { dateIn.focus(); dateIn.click(); } } },
+          h('b', { text: label }), h('small', { text: new Date(d + 'T00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }) })),
+        dateIn,
+        h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Next day', disabled: d >= today, onclick: () => { S.mDate = shiftDay(d, 1); render(true); } }, icon('next'))),
+      macroSummary(t, g),
+      h('button', { type: 'button', class: 'primary big', style: 'margin-top:12px', onclick: () => mealSheet(null, d) }, icon('camera'), 'Add Food'),
+      MEALS.map(mt => {
+        const ms = list.filter(m => (m.meal || 'Snack') === mt);
+        if (!ms.length) return null;
+        return [sectionhd(mt, h('span', { class: 'muted', style: 'font-size:.85rem', text: `${Math.round(totals(ms).cal).toLocaleString()} kcal` })), h('div', { class: 'cards' }, ms.map(mealCard))];
+      }),
+      list.length ? null : h('div', { class: 'empty', style: 'margin-top:14px' }, h('h2', { text: d === today ? 'Nothing logged yet today' : 'Nothing logged this day' }),
+        h('p', { text: 'Snap a photo of your food and type in the macros from the label or your tracking app.' })),
+      weekMacros(d, g));
+  }
+
+  function macroSummary(t, g) {
+    const left = Math.round(g.cal - t.cal);
+    const pct = g.cal ? Math.min(1, t.cal / g.cal) : 0;
+    const r = 46, C = 2 * Math.PI * r;
+    const ring = svgFrom(`<svg viewBox="0 0 110 110" class="ring" aria-hidden="true"><defs><linearGradient id="mring" x1="0" x2="1"><stop offset="0" stop-color="#ff5c9e"/><stop offset="1" stop-color="#c08cff"/></linearGradient></defs><circle cx="55" cy="55" r="${r}" fill="none" stroke="rgba(255,196,222,.1)" stroke-width="10"/><circle cx="55" cy="55" r="${r}" fill="none" stroke="url(#mring)" stroke-width="10" stroke-linecap="round" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C * (1 - pct)).toFixed(1)}" transform="rotate(-90 55 55)"/></svg>`);
+    const bar = (label, v, goal, cls) => h('div', { class: 'mbar', role: 'img', 'aria-label': `${label}: ${Math.round(v)} of ${goal} grams` },
+      h('div', { class: 'mtop' }, h('span', { text: label }), h('b', { text: `${Math.round(v)} / ${goal} g` })),
+      h('div', { class: 'tr' }, h('i', { class: cls, style: `width:${Math.min(100, goal ? v / goal * 100 : 0)}%` })));
+    return h('div', { class: 'panel msum' },
+      h('div', { class: 'ringwrap', role: 'img', 'aria-label': `${Math.round(t.cal)} of ${g.cal} calories` }, ring,
+        h('div', { class: 'ringtxt' }, h('b', { text: Math.round(t.cal).toLocaleString() }), h('span', { text: `of ${Number(g.cal).toLocaleString()} kcal` }))),
+      h('div', null,
+        h('div', { class: 'mleft' + (left < 0 ? ' over' : ''), text: left >= 0 ? `${left.toLocaleString()} kcal left` : `${(-left).toLocaleString()} kcal over` }),
+        bar('Protein', t.p, g.p, 'mp'), bar('Carbs', t.c, g.c, 'mc'), bar('Fat', t.f, g.f, 'mf')));
+  }
+
+  function mealCard(m) {
+    const th = S.thumbs[m.id];
+    const time = new Date(m.at || Date.now()).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    return h('button', { type: 'button', class: 'mcard', onclick: () => mealDetail(m.id) },
+      m.hasPhoto && th ? h('img', { src: th, alt: 'Photo of ' + (m.name || 'food'), class: 'mthumb' })
+        : h('span', { class: 'mthumb ph', 'aria-hidden': 'true' }, icon(m.hasPhoto ? 'camera' : 'plate')),
+      h('span', { class: 'grow' },
+        h('span', { class: 't', text: m.name || 'Food' }),
+        h('span', { class: 's', text: `${time} · ${Math.round(mealCal(m)).toLocaleString()} kcal` }),
+        h('span', { class: 'mchips' }, h('i', { class: 'mp', text: `P ${fmt1(m.p)}` }), h('i', { class: 'mc', text: `C ${fmt1(m.c)}` }), h('i', { class: 'mf', text: `F ${fmt1(m.f)}` }))),
+      icon('next', 'ic sm'));
+  }
+
+  function mealSheet(existing, date) {
+    const d = {
+      meal: existing ? existing.meal || 'Snack' : mealByTime(), name: existing ? existing.name || '' : '',
+      cal: existing && numv(existing.cal) > 0 ? String(existing.cal) : '', p: existing ? String(existing.p ?? '') : '', c: existing ? String(existing.c ?? '') : '', f: existing ? String(existing.f ?? '') : '',
+      notes: existing ? existing.notes || '' : '', photo: null, removed: false
+    };
+    const zone = h('label', { class: 'photozone' });
+    const fileIn = h('input', { type: 'file', accept: 'image/*', class: 'sr', onchange: async (e) => {
+      const file = e.target.files && e.target.files[0]; if (!file) return;
+      zone.replaceChildren(h('span', { class: 'muted', text: 'Preparing photo…' }));
+      try {
+        const img = await loadImage(file);
+        d.photo = { thumb: squareThumb(img, 240), image: shrinkImage(img, 1280, 0.8) }; d.removed = false;
+      } catch (err) { toast(err.message); }
+      drawZone();
+    } });
+    function drawZone() {
+      const src = d.photo ? d.photo.image : (existing && existing.hasPhoto && !d.removed ? (S.images[existing.id] || S.thumbs[existing.id]) : null);
+      zone.replaceChildren(fileIn, ...(src
+        ? [h('img', { src, alt: 'Food photo' }), h('span', { class: 'zonebtns' },
+            h('span', { class: 'pill', text: 'Change photo' }),
+            h('button', { type: 'button', class: 'small danger', onclick: (e) => { e.preventDefault(); d.photo = null; d.removed = true; drawZone(); } }, 'Remove'))]
+        : [icon('camera'), h('b', { text: 'Add a photo' }), h('span', { style: 'font-size:.8rem', text: 'Take one or pick from your library (optional)' })]));
+    }
+    drawZone();
+    if (existing && existing.hasPhoto && !S.images[existing.id]) getImage(existing.id).then(() => { if (!d.photo && !d.removed) drawZone(); }).catch(() => {});
+
+    const calIn = h('input', { inputmode: 'decimal', value: d.cal, autocomplete: 'off', oninput: (e) => { d.cal = e.target.value; } });
+    const autoCal = () => { calIn.placeholder = String(Math.round(4 * numv(d.p) + 4 * numv(d.c) + 9 * numv(d.f)) || 'auto'); };
+    const macroIn = (k) => h('input', { inputmode: 'decimal', value: d[k], placeholder: '0', autocomplete: 'off', oninput: (e) => { d[k] = e.target.value; autoCal(); } });
+    const inputs = { p: macroIn('p'), c: macroIn('c'), f: macroIn('f') };
+    autoCal();
+    const nameIn = h('input', { value: d.name, placeholder: 'e.g. Greek yogurt bowl', autocomplete: 'off', oninput: (e) => { d.name = e.target.value; } });
+    const segBox = h('div', { class: 'seg', role: 'group', 'aria-label': 'Meal' });
+    const drawSeg = () => segBox.replaceChildren(...MEALS.map(mt => h('button', { type: 'button', 'aria-pressed': String(d.meal === mt), onclick: () => { d.meal = mt; drawSeg(); } }, mt)));
+    drawSeg();
+
+    // Recent foods: one tap fills in the name and macros.
+    const seen = new Set(), recent = [];
+    for (const m of [...S.meals].sort((a, b) => (b.at || 0) - (a.at || 0))) { const k = (m.name || '').trim().toLowerCase(); if (k && !seen.has(k)) { seen.add(k); recent.push(m); } if (recent.length >= 12) break; }
+    const recentBox = !existing && recent.length ? h('div', null, h('div', { class: 'eyebrow', style: 'margin-bottom:6px', text: 'Recent' }),
+      h('div', { class: 'recent' }, recent.map(m => h('button', { type: 'button', onclick: () => {
+        d.name = m.name || ''; d.cal = numv(m.cal) > 0 ? String(m.cal) : ''; d.p = String(m.p ?? ''); d.c = String(m.c ?? ''); d.f = String(m.f ?? '');
+        nameIn.value = d.name; calIn.value = d.cal; inputs.p.value = d.p; inputs.c.value = d.c; inputs.f.value = d.f; autoCal();
+      } }, m.name)))) : null;
+
+    const save = h('button', { type: 'button', class: 'primary small', text: 'Save', onclick: async () => {
+      const hasPhoto = !!(d.photo || (existing && existing.hasPhoto && !d.removed));
+      if (!d.name.trim() && !hasPhoto && !(numv(d.p) || numv(d.c) || numv(d.f) || numv(d.cal))) { toast('Add a photo, a name or some macros'); return; }
+      const m = existing ? { ...existing } : { id: uid('m'), date, at: date === todayISO() ? Date.now() : new Date(date + 'T12:00').getTime(), by: S.myName };
+      Object.assign(m, { meal: d.meal, name: d.name.trim(), cal: numv(d.cal) > 0 ? numv(d.cal) : '', p: numv(d.p), c: numv(d.c), f: numv(d.f), notes: d.notes.trim(), hasPhoto });
+      sh.close();
+      await action(existing ? 'Food updated' : 'Food added', () => put('meals', m));
+      try {
+        if (d.photo) await savePhoto(m.id, d.photo.thumb, d.photo.image);
+        else if (existing && existing.hasPhoto && d.removed) await deletePhoto(m.id);
+      } catch (e) { showErr(e); }
+      render(true);
+    } });
+    const sh = sheet(existing ? 'Edit Food' : 'Add Food', h('div', { class: 'fgrid' },
+      zone, recentBox, segBox, field('Name', nameIn),
+      h('div', { class: 'mgrid' }, field('Calories', calIn), field('Protein g', inputs.p), field('Carbs g', inputs.c), field('Fat g', inputs.f)),
+      h('p', { class: 'muted', style: 'font-size:.78rem;margin:-6px 0 0', text: 'Leave calories blank to work them out from the macros.' }),
+      field('Notes', h('textarea', { value: d.notes, placeholder: 'Optional', style: 'min-height:60px', oninput: (e) => { d.notes = e.target.value; } })),
+      h('button', { type: 'button', class: 'primary big', onclick: () => save.click() }, existing ? 'Save Changes' : 'Add Food')),
+      { tall: true, right: save });
+  }
+
+  function mealDetail(id) {
+    const m = S.meals.find(x => x.id === id); if (!m) return;
+    const photo = m.hasPhoto ? h('img', { class: 'fullphoto', alt: 'Photo of ' + (m.name || 'food'), src: S.images[id] || S.thumbs[id] || '' }) : null;
+    if (m.hasPhoto && !S.images[id]) getImage(id).then(src => { if (src && photo) photo.src = src; }).catch(() => {});
+    const row = (k, v) => h('div', { class: 'r', style: 'grid-template-columns:1fr auto' }, h('span', { text: k }), h('b', { text: v }));
+    const sh = sheet(m.name || 'Food', h('div', { class: 'fgrid' },
+      photo,
+      h('div', { class: 'muted', text: `${m.meal || 'Snack'} · ${new Date(m.at || Date.now()).toLocaleString(undefined, { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` }),
+      h('div', { class: 'sets' }, row('Calories', `${Math.round(mealCal(m)).toLocaleString()} kcal${numv(m.cal) > 0 ? '' : ' (from macros)'}`), row('Protein', `${fmt1(m.p)} g`), row('Carbs', `${fmt1(m.c)} g`), row('Fat', `${fmt1(m.f)} g`)),
+      m.notes ? h('p', { style: 'margin:0;white-space:pre-wrap', text: m.notes }) : null,
+      h('div', { class: 'duo' },
+        h('button', { type: 'button', style: 'justify-content:center', onclick: () => { sh.close(); mealSheet(m, m.date); } }, icon('edit', 'ic sm'), 'Edit'),
+        h('button', { type: 'button', style: 'justify-content:center', onclick: async () => {
+          sh.close();
+          const today = todayISO();
+          const copy = { ...clone(m), id: uid('m'), date: today, at: Date.now(), by: S.myName };
+          await action('Logged again today', () => put('meals', copy));
+          if (m.hasPhoto) { const img = await getImage(m.id).catch(() => null); const th = S.thumbs[m.id]; if (img && th) await savePhoto(copy.id, th, img).catch(showErr); else await put('meals', { ...copy, hasPhoto: false }).catch(() => {}); }
+          S.mDate = today; render(true);
+        } }, icon('repeat', 'ic sm'), 'Log Again Today')),
+      h('button', { type: 'button', class: 'danger', onclick: async () => {
+        if (!(await confirmBox('Delete this food?', 'You can undo right after.', 'Delete', true))) return;
+        sh.close();
+        await action('Food deleted', () => del('meals', m.id));
+        // Remove the photo too, unless the delete was undone.
+        if (m.hasPhoto) setTimeout(() => { if (!S.meals.some(x => x.id === m.id)) deletePhoto(m.id).catch(() => {}); }, 9000);
+      } }, icon('trash', 'ic sm'), 'Delete')), { tall: !!m.hasPhoto });
+  }
+
+  function weekMacros(d, g) {
+    const days = Array.from({ length: 7 }, (_, i) => shiftDay(d, i - 6));
+    const pts = days.map(x => ({ x: new Date(x + 'T00:00').getTime(), y: totals(dayMeals(x)).cal }));
+    const logged = days.filter(x => dayMeals(x).length);
+    const avg = (k) => logged.length ? Math.round(logged.reduce((a, x) => a + totals(dayMeals(x))[k], 0) / logged.length) : 0;
+    const W = 340, H = 150, L = 34, R = 6, T = 10, B = 22;
+    const max = niceMax(Math.max(g.cal, ...pts.map(p => p.y)));
+    const bw = (W - L - R) / 7, sy = (y) => T + (1 - y / max) * (H - T - B);
+    const svg = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Calories, last 7 days">
+      <defs><linearGradient id="mwk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff5c9e"/><stop offset="1" stop-color="#c08cff"/></linearGradient></defs>
+      ${[0, max / 2, max].map(t => `<line class="grid" x1="${L}" x2="${W - R}" y1="${sy(t)}" y2="${sy(t)}"/><text x="${L - 5}" y="${sy(t) + 3.5}" text-anchor="end">${kfmt(t)}</text>`).join('')}
+      <line x1="${L}" x2="${W - R}" y1="${sy(g.cal)}" y2="${sy(g.cal)}" stroke="#ffb199" stroke-dasharray="4 4" stroke-width="1.5"/>
+      ${pts.map((p, i) => { const hh = Math.max(0, H - B - sy(p.y)), x = L + i * bw + bw * .2;
+        return `<rect x="${x}" y="${H - B - hh}" width="${bw * .6}" height="${hh}" rx="4" fill="url(#mwk)"><title>${Math.round(p.y)} kcal</title></rect><text x="${x + bw * .3}" y="${H - 6}" text-anchor="middle">${new Date(p.x).toLocaleDateString(undefined, { weekday: 'narrow' })}</text>`; }).join('')}</svg>`;
+    return h('div', { class: 'panel', style: 'margin-top:16px' },
+      h('div', { class: 'hd' }, h('h2', { text: 'Last 7 days' }), h('span', { class: 'muted', style: 'font-size:.78rem', text: 'dashed line = goal' })),
+      svgFrom(svg),
+      h('div', { class: 'tally', style: 'margin-top:10px' },
+        h('div', null, h('span', { text: 'Avg calories' }), h('b', { text: logged.length ? avg('cal').toLocaleString() : '—' })),
+        h('div', null, h('span', { text: 'Avg protein' }), h('b', { text: logged.length ? avg('p') + ' g' : '—' })),
+        h('div', null, h('span', { text: 'Days logged' }), h('b', { text: `${logged.length} / 7` }))));
+  }
+
+  // Export: a CSV spreadsheet (opens in Numbers, Excel or Google Sheets). On iPhone this
+  // opens the share sheet so it can be saved to Files, emailed or AirDropped.
+  function exportSheet() {
+    const st = { range: 30, kind: 'foods' };
+    const opt = (key, val, label) => h('button', { type: 'button', 'aria-pressed': String(st[key] === val), onclick: () => { st[key] = val; draw(); } }, label);
+    const box = h('div', { class: 'fgrid' });
+    const count = h('p', { class: 'muted', style: 'margin:0;font-size:.85rem' });
+    function pick() {
+      const today = todayISO();
+      const from = st.range ? shiftDay(today, -(st.range - 1)) : '0000-00-00';
+      return S.meals.filter(m => m.date >= from && m.date <= today).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.at || 0) - (b.at || 0)));
+    }
+    function draw() {
+      const list = pick();
+      const days = new Set(list.map(m => m.date)).size;
+      count.textContent = list.length ? `${list.length} food${list.length === 1 ? '' : 's'} over ${days} day${days === 1 ? '' : 's'}.` : 'Nothing logged in this range yet.';
+      box.replaceChildren(
+        h('div', { class: 'f' }, h('span', { class: 'eyebrow', text: 'Time range' }), h('div', { class: 'seg' }, opt('range', 7, 'Last 7 days'), opt('range', 30, 'Last 30 days'), opt('range', 0, 'All time'))),
+        h('div', { class: 'f' }, h('span', { class: 'eyebrow', text: 'What to include' }), h('div', { class: 'seg' }, opt('kind', 'foods', 'Every food'), opt('kind', 'days', 'Daily totals'))),
+        count,
+        h('button', { type: 'button', class: 'primary big', disabled: !list.length, onclick: () => doExport(list) }, icon('share'), 'Export CSV'));
+    }
+    async function doExport(list) {
+      const q = (v) => { const s = String(v ?? ''); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+      const r1 = (v) => Math.round(numv(v) * 10) / 10;
+      let rows;
+      if (st.kind === 'foods') {
+        rows = [['Date', 'Time', 'Meal', 'Food', 'Calories', 'Protein (g)', 'Carbs (g)', 'Fat (g)', 'Notes', 'Photo']].concat(list.map(m => [
+          m.date, new Date(m.at || Date.now()).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }), m.meal || '', m.name || '',
+          Math.round(mealCal(m)), r1(m.p), r1(m.c), r1(m.f), m.notes || '', m.hasPhoto ? 'yes' : '']));
+      } else {
+        const g = goals(), byDay = {};
+        for (const m of list) (byDay[m.date] = byDay[m.date] || []).push(m);
+        rows = [['Date', 'Foods', 'Calories', 'Protein (g)', 'Carbs (g)', 'Fat (g)', 'Calorie goal', 'Protein goal (g)']].concat(Object.keys(byDay).sort().map(d => {
+          const t = totals(byDay[d]);
+          return [d, byDay[d].length, Math.round(t.cal), r1(t.p), r1(t.c), r1(t.f), g.cal, g.p];
+        }));
+      }
+      const csv = '﻿' + rows.map(r => r.map(q).join(',')).join('\r\n');
+      const name = `courtfit-macros-${st.kind === 'foods' ? 'foods' : 'daily'}-${todayISO()}.csv`;
+      const file = new File([csv], name, { type: 'text/csv' });
+      try {
+        if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'CourtFit macros' }); sh.close(); return; }
+      } catch (e) { if (e && e.name === 'AbortError') return; }
+      const a = h('a', { href: URL.createObjectURL(file), download: name });
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      sh.close(); toast('Export downloaded');
+    }
+    draw();
+    const sh = sheet('Export Macros', h('div', null, box, h('p', { class: 'muted', style: 'font-size:.78rem;margin:12px 0 0', text: 'Saves a spreadsheet file (CSV) that opens in Numbers, Excel or Google Sheets. Photos stay in the app.' })));
+  }
+
+  function goalsSheet() {
+    const g = goals();
+    const inp = (k) => h('input', { inputmode: 'numeric', value: String(g[k]), autocomplete: 'off' });
+    const I = { cal: inp('cal'), p: inp('p'), c: inp('c'), f: inp('f') };
+    const hint = h('p', { class: 'muted', style: 'font-size:.8rem;margin:0' });
+    const upd = () => { hint.textContent = `Your macros add up to about ${Math.round(4 * numv(I.p.value) + 4 * numv(I.c.value) + 9 * numv(I.f.value)).toLocaleString()} kcal.`; };
+    for (const k of ['p', 'c', 'f']) I[k].addEventListener('input', upd);
+    upd();
+    const sh = sheet('Daily Goals', h('form', { class: 'fgrid', onsubmit: (e) => {
+      e.preventDefault();
+      const next = {}; for (const k of Object.keys(I)) next[k] = Math.max(0, Math.round(numv(I[k].value)));
+      if (!next.cal) { toast('Set a calorie goal'); return; }
+      ls.set('cf-goals', JSON.stringify(next)); sh.close(); toast('Goals saved'); render(true);
+    } }, h('div', { class: 'mgrid' }, field('Calories', I.cal), field('Protein g', I.p), field('Carbs g', I.c), field('Fat g', I.f)), hint,
+      h('button', { class: 'primary big', type: 'submit', text: 'Save Goals' })));
+  }
+
   // ---------- active workout ----------
   const newSet = (weight = null, reps = null, kind = 'normal', target = '') => ({ weight: weight ?? null, reps: reps ?? null, done: false, kind: kind || 'normal', target });
   function defaultName() { const hr = new Date().getHours(); return hr >= 4 && hr < 12 ? 'Morning Workout' : hr >= 12 && hr < 17 ? 'Afternoon Workout' : 'Evening Workout'; }
@@ -1318,6 +1640,7 @@
     channel = S.sb.channel('courtfit-changes', { config: { broadcast: { self: false } } })
       .on('broadcast', { event: 'changed' }, ({ payload }) => {
         clearTimeout(t);
+        if (payload && payload.table === 'meal_photos') { S.thumbs = {}; S.images = {}; render(); return; }
         const tb = payload && TABLES.includes(payload.table) ? payload.table : null;
         t = setTimeout(() => (tb ? loadTable(tb) : Promise.all(TABLES.map(loadTable))).then(() => { saveCache(); render(); }).catch(() => {}), 200);
       })
