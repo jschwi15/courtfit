@@ -827,12 +827,16 @@
     return Math.max(0, Math.min((p.weeks || 6) - 1, d));
   }
   // Edits change the current program object right away; saving waits for a pause in typing.
-  let progTimer = null;
+  let progTimer = null, progTyped = false;
   function saveProg() { clearTimeout(progTimer); progTimer = setTimeout(flushProg, 700); }
   async function flushProg() {
     if (!progTimer) return;
     clearTimeout(progTimer); progTimer = null;
-    const p = curProg(); if (p) await put('programs', p).catch(showErr);
+    const p = curProg(); if (!p) return;
+    let ok = true;
+    await put('programs', p).catch((e) => { ok = false; showErr(e); });
+    // First StrongHER set she types in herself (week 1 from the paper doesn't count).
+    if (ok && progTyped && !firstLogShown() && !S.workouts.length) firstLogMessage();
   }
   const editProg = (fn) => { const p = curProg(); if (!p) return; fn(p); saveProg(); };
   const shTitle = () => h('h1', { class: 'shlogo' }, h('span', { class: 'sh-strong', text: 'Strong' }), ' HER');
@@ -894,6 +898,7 @@
                 oninput: (e) => {
                   const v = e.target.value.trim();
                   e.target.classList.toggle('filled', !!v);
+                  if (v) progTyped = true;
                   editProg(q => {
                     const k = wlog(q, w.key).weeks[wi];
                     const a = (k.v[ex.n] || []).slice(); while (a.length < ex.reps.length) a.push('');
@@ -1454,11 +1459,23 @@
       go('#w-' + done.id);
       return;
     }
+    const first = !firstLogShown() && !S.workouts.some(x => x.id !== done.id);
     try { await put('workouts', done); } catch (e) { showErr(e); }
     go('');
-    setTimeout(() => summary(done, prs, live), 150);
+    setTimeout(() => summary(done, prs, live, first ? firstLogMessage : null), 150);
   }
-  function summary(w, prs, live) {
+  // One-time message after the very first exercise she logs (Workout tab or StrongHER), never again.
+  const firstLogShown = () => ls.get('cf-first-log-shown') === '1';
+  function firstLogMessage() {
+    if (firstLogShown()) return;
+    ls.set('cf-first-log-shown', '1');
+    if (navigator.vibrate) navigator.vibrate([30, 60, 30]);
+    const sh = sheet(null, h('div', { style: 'text-align:center;display:grid;gap:14px;padding:8px 0 4px' },
+      h('div', { class: 'trophy' }, icon('heart')),
+      h('h2', { style: 'font-size:1.55rem;line-height:1.25', text: 'Now thank your husband with a BJ!!!!' }),
+      h('button', { type: 'button', class: 'primary big', text: 'OK 😉', onclick: () => sh.close() })));
+  }
+  function summary(w, prs, live, after) {
     chime();
     const sh = sheet(null, h('div', { style: 'text-align:center;display:grid;gap:12px' },
       h('div', { class: 'trophy' }, icon('trophy')),
@@ -1468,6 +1485,7 @@
       prs.length ? h('div', { class: 'panel', style: 'text-align:left' }, h('div', { class: 'accent', style: 'font-weight:700;margin-bottom:6px', text: '🏆 New personal records' }),
         prs.map(p => h('div', { style: 'display:flex;justify-content:space-between;padding:4px 0' }, h('span', { text: p.name }), h('b', { text: fwu(p.weight) })))) : null,
       h('button', { type: 'button', class: 'primary big', text: 'Done', onclick: () => sh.close() })));
+    if (after) sh.onClose = () => setTimeout(after, 250);
   }
 
   // Rest timer bar (shown during a workout).
