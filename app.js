@@ -20,10 +20,11 @@
   const EQUIPMENT = ['Barbell', 'Dumbbell', 'Machine', 'Cable', 'Bodyweight', 'Kettlebell', 'Band', 'Smith Machine', 'Other'];
 
   const S = {
-    sb: null, myName: '', exercises: [], routines: [], workouts: [], active: null,
+    sb: null, myName: '', exercises: [], routines: [], workouts: [], programs: [], active: null,
     loaded: false, offline: false, outbox: [], view: { name: 'home' }, pendingRender: false,
     search: '', muscle: null, exMetric: 'heaviest', profMetric: 'workouts', rMetric: 'volume',
-    calMonth: firstOfMonth(Date.now()), routinesOpen: true
+    calMonth: firstOfMonth(Date.now()), routinesOpen: true,
+    progId: null, progWorkout: 'A', progWeek: null, progMode: 'week'
   };
 
   // ---------- helpers ----------
@@ -125,7 +126,7 @@
   const sortedRoutines = () => [...S.routines].sort((a, b) => (a.order ?? a.created ?? 0) - (b.order ?? b.created ?? 0));
 
   // ---------- data: Supabase + offline outbox + undo ----------
-  const TABLES = ['exercises', 'routines', 'workouts'];
+  const TABLES = ['exercises', 'routines', 'workouts', 'programs'];
   const listOf = (t) => S[t];
   const setList = (t, arr) => { S[t] = arr; };
   const toRow = (t, obj) => { const data = clone(obj); delete data.id; return { id: obj.id, data }; };
@@ -135,9 +136,9 @@
     if (op.op === 'put') arr.push(fromRow(op.table, op.row));
     setList(op.table, arr);
   }
-  function saveCache() { ls.set('cf-cache', JSON.stringify({ exercises: S.exercises, routines: S.routines, workouts: S.workouts, at: Date.now() })); }
+  function saveCache() { ls.set('cf-cache', JSON.stringify({ exercises: S.exercises, routines: S.routines, workouts: S.workouts, programs: S.programs, at: Date.now() })); }
   function loadCache() {
-    try { const c = JSON.parse(ls.get('cf-cache') || 'null'); if (c) { S.exercises = c.exercises || []; S.routines = c.routines || []; S.workouts = c.workouts || []; return true; } } catch { }
+    try { const c = JSON.parse(ls.get('cf-cache') || 'null'); if (c) { S.exercises = c.exercises || []; S.routines = c.routines || []; S.workouts = c.workouts || []; S.programs = c.programs || []; return true; } } catch { }
     return false;
   }
   const saveOutbox = () => ls.set('cf-outbox', JSON.stringify(S.outbox));
@@ -216,6 +217,7 @@
     const s = location.hash.slice(1); let m;
     if (s === 'workout') return { name: 'workout' };
     if (s === 'profile') return { name: 'profile' };
+    if (s === 'strongher') return { name: 'strongher' };
     if (s === 'exercises') return { name: 'exercises' };
     if (s === 'settings') return { name: 'settings' };
     if (s === 'active') return { name: 'active' };
@@ -225,6 +227,7 @@
     return { name: 'home' };
   }
   function route() {
+    flushProg();
     S.view = parseHash();
     closeSheets();
     render(true); window.scrollTo(0, 0);
@@ -252,6 +255,7 @@
     else if (v.name === 'exercise') node = exerciseView(v.id);
     else if (v.name === 'wdetail') node = workoutDetail(v.id);
     else if (v.name === 'profile') node = profileView();
+    else if (v.name === 'strongher') node = programView();
     else if (v.name === 'settings') node = settingsView();
     else node = homeView();
     const banner = S.offline ? h('div', { class: 'banner' },
@@ -271,6 +275,7 @@
   function tabFor(v) {
     if (['workout', 'routine', 'active'].includes(v.name)) return 'workout';
     if (['profile', 'exercises', 'exercise', 'settings'].includes(v.name)) return 'profile';
+    if (v.name === 'strongher') return 'strongher';
     return 'home';
   }
   function updateChrome() {
@@ -752,6 +757,217 @@
       h('p', { class: 'muted', style: 'text-align:center;font-size:.8rem;margin-top:18px', text: 'CourtFit · Lift, log, glow' }));
   }
 
+  // ---------- StrongHER program tracker (mirrors the paper sheets) ----------
+  // One row in `programs` per round. log[workoutKey].weeks[i] = { date, v: { exerciseNumber: [weight per set] } }.
+  // Values are free text so entries like "—", "BW" or "AW" from the paper fit too.
+  const SH_FLOW = 'Start on different moves, then swap. Unilateral blocks: both moves right, then both left = 1 round.';
+  const SH_CORE = '2 rounds: Move 1 - 60 sec + Move 2 - 60 sec. Split sides within the minute when needed.';
+  const STRONGHER_R4 = {
+    id: 'strongher-r4', name: 'StrongHER', round: 4, theme: 'Holiday Hustle', weeks: 6,
+    startDate: '2026-11-08', unit: 'lb', bodyWeight: '158.9', created: Date.UTC(2026, 10, 8),
+    footer: 'Increase load when reps, range and control allow. Keep the prescribed tempo consistent.',
+    workouts: [
+      { key: 'A', phase: 'Build', where: 'In person', flow: SH_FLOW, finisher: SH_CORE, ex: [
+        { n: '1.1', name: 'Front-rack DB squat', note: '', reps: [12, 10, 8, 6] },
+        { n: '1.2', name: 'Rotating DB bench press', note: '', reps: [12, 10, 8, 6] },
+        { n: '2.1', name: 'Bench-supported single-arm row', note: 'Per side | 3-sec lowering', reps: [12, 10, 8] },
+        { n: '2.2', name: 'Kickstand DB Romanian deadlift', note: 'Per side | 3-sec lowering', reps: [12, 10, 8] },
+        { n: '3.1', name: 'Lateral step-up', note: 'Per side | Low stable platform', reps: [10, 10, 10] },
+        { n: '3.2', name: 'Weighted lateral leg raise at barre', note: 'Per side', reps: [10, 10, 10] },
+        { n: '4.1', name: 'Seated W biceps curl', note: '', reps: [12, 10, 8] },
+        { n: '4.2', name: 'Bent-over DB reverse fly', note: 'Controlled 2-sec lowering', reps: [12, 10, 8] }] },
+      { key: 'B', phase: 'Perform', where: 'In person', flow: SH_FLOW, finisher: SH_CORE, ex: [
+        { n: '1.1', name: 'Single-DB Romanian deadlift', note: '', reps: [12, 10, 8, 6] },
+        { n: '1.2', name: 'Seated narrow DB shoulder press', note: '', reps: [12, 10, 8, 6] },
+        { n: '2.1', name: 'Assisted pull-up / barre pull-up', note: 'Record assistance or variation', reps: [15, 15, 15] },
+        { n: '2.2', name: 'Hands-on-bench push-up', note: 'Record bench height / variation', reps: [15, 15, 15] },
+        { n: '3.1', name: 'Reverse-stepping DB lunge', note: 'Per side', reps: [12, 10, 8] },
+        { n: '3.2', name: 'Seated single-arm overhead triceps extension', note: 'Per side', reps: [12, 10, 8] },
+        { n: '4.1', name: 'Weighted side-lying adductor raise', note: 'Per side | Bottom leg lifts', reps: [8, 8, 8] },
+        { n: '4.2', name: 'Cross-body hammer curl', note: 'Per side', reps: [8, 8, 8] }] },
+      { key: 'C', phase: 'Grow', where: 'Optional at home', home: 'Dumbbells + body weight only. Four rounds per block; finish with about 3 good reps left. 1.5-rep squat: lower, halfway up, lower again, then stand. No bench or barre needed.', ex: [
+        { n: '1.1', name: 'DB 1.5-rep squat', note: 'One full cycle = one rep', reps: [12, 10, 8, 6] },
+        { n: '1.2', name: 'Elbows-out bent-over DB row', note: '', reps: [12, 10, 8, 6] },
+        { n: '2.1', name: 'DB good morning - weight at chest', note: '3-sec lowering', reps: [12, 10, 8, 6] },
+        { n: '2.2', name: 'DB squeeze floor press', note: '', reps: [12, 10, 8, 6] },
+        { n: '3.1', name: 'Side-lying hip abduction', note: 'Per side', reps: [12, 10, 8, 6] },
+        { n: '3.2', name: 'Supine alternating heel taps', note: 'Per side | Record BW', reps: [12, 10, 8, 6] }] }
+    ],
+    log: {
+      A: { weeks: [{ date: '', v: { '1.1': ['12', '15', '20', '20'], '1.2': ['12', '15', '20', '20'], '2.1': ['15', '20', '25'], '2.2': ['15', '20', '25'],
+        '3.1': ['AW', 'AW', 'AW'], '3.2': ['AW', 'AW', 'AW'], '4.1': ['10', '10', '10'], '4.2': ['10', '10', '10'] } }], core1: '', core2: '', notes: '' },
+      B: { weeks: [{ date: '', v: { '1.1': ['10', '12', '15', '20'], '1.2': ['8', '8', '10', '10'], '2.1': ['—', '—', '—'], '2.2': ['—', '—', '—'],
+        '3.1': ['8', '10', '12'], '3.2': ['7', '7', '10'], '4.1': ['—', '—', '—'], '4.2': ['10', '10', '10'] } }], core1: '', core2: '', notes: '' },
+      C: { weeks: [], core1: '', core2: '', notes: '' }
+    }
+  };
+  const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const fmtMD = (iso) => iso ? new Date(iso + 'T00:00').toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' }) : '';
+  const sortedPrograms = () => [...S.programs].sort((a, b) => (b.created || 0) - (a.created || 0));
+  const curProg = () => { const list = sortedPrograms(); return list.find(p => p.id === S.progId) || list[0] || null; };
+  function wlog(p, key) {
+    p.log = p.log || {};
+    const l = p.log[key] = p.log[key] || { weeks: [], core1: '', core2: '', notes: '' };
+    l.weeks = l.weeks || [];
+    while (l.weeks.length < (p.weeks || 6)) l.weeks.push({ date: '', v: {} });
+    for (const w of l.weeks) w.v = w.v || {};
+    return l;
+  }
+  const weekHas = (wk) => Object.values(wk.v || {}).some(a => (a || []).some(x => String(x || '').trim()));
+  function defaultWeek(p) {
+    if (!p.startDate) return 0;
+    const d = Math.floor((startOfDay(Date.now()) - new Date(p.startDate + 'T00:00').getTime()) / (7 * DAY));
+    return Math.max(0, Math.min((p.weeks || 6) - 1, d));
+  }
+  // Edits change the current program object right away; saving waits for a pause in typing.
+  let progTimer = null;
+  function saveProg() { clearTimeout(progTimer); progTimer = setTimeout(flushProg, 700); }
+  function flushProg() {
+    if (!progTimer) return;
+    clearTimeout(progTimer); progTimer = null;
+    const p = curProg(); if (p) put('programs', p).catch(showErr);
+  }
+  const editProg = (fn) => { const p = curProg(); if (!p) return; fn(p); saveProg(); };
+  const shTitle = () => h('h1', { class: 'shlogo' }, h('span', { class: 'sh-strong', text: 'Strong' }), ' HER');
+
+  function programView() {
+    const p = curProg();
+    if (!p) return h('div', null, topbar(shTitle()), msg('Setting up StrongHER…', 'One moment.'));
+    const w = p.workouts.find(x => x.key === S.progWorkout) || p.workouts[0];
+    const L = wlog(p, w.key);
+    const wi = Math.min(S.progWeek ?? defaultWeek(p), L.weeks.length - 1);
+    const pill = (k, label) => h('button', { type: 'button', 'aria-pressed': String(S.progMode === k), onclick: () => { flushProg(); S.progMode = k; render(true); } }, label);
+    return h('div', null,
+      topbar(shTitle(), h('span', { class: 'spacer' }),
+        h('button', { type: 'button', class: 'roundbtn', 'aria-label': 'StrongHER options', onclick: () => programMenu(p, w) }, icon('dots'))),
+      h('div', { class: 'panel' },
+        h('div', { class: 'eyebrow', text: `Round ${p.round || ''}${p.theme ? ' / ' + p.theme : ''} / ${p.weeks || 6}-week weight tracker` }),
+        h('div', { class: 'fgrid', style: 'grid-template-columns:minmax(0,1.5fr) minmax(0,.8fr) minmax(0,1fr);margin-top:12px' },
+          field('Start date', h('input', { type: 'date', value: p.startDate || '', onchange: (e) => { editProg(q => { q.startDate = e.target.value; }); } })),
+          field('Units', h('select', { onchange: (e) => editProg(q => { q.unit = e.target.value; }) }, ['lb', 'kg'].map(u => h('option', { value: u, text: u, selected: (p.unit || 'lb') === u })))),
+          field('Body wt', h('input', { inputmode: 'decimal', value: p.bodyWeight || '', placeholder: '—', autocomplete: 'off', oninput: (e) => editProg(q => { q.bodyWeight = e.target.value.trim(); }) }))),
+        h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-top:12px' },
+          h('span', { class: 'eyebrow', text: 'Progress, not perfection' }), h('span', { class: 'accent' }, icon('heart', 'ic sm')))),
+      h('div', { class: 'tabs', role: 'tablist', style: 'margin-top:14px' }, p.workouts.map(x => h('button', { type: 'button', role: 'tab', 'aria-selected': String(x.key === w.key),
+        onclick: () => { flushProg(); S.progWorkout = x.key; render(true); } }, h('span', { style: 'display:grid;line-height:1.25' }, h('b', { text: 'Workout ' + x.key }), h('small', { style: 'font-weight:500;font-size:.72rem', text: x.phase }))))),
+      h('div', { class: 'sectionhd', style: 'margin-top:4px' },
+        h('h2', { text: `${(w.phase || '').toUpperCase()} | WORKOUT ${w.key}` }), h('span', { class: 'eyebrow', text: w.where || '' })),
+      h('div', { class: 'pills', style: 'margin-bottom:12px' }, pill('week', 'Log week'), pill('grid', 'All 6 weeks')),
+      S.progMode === 'grid' ? programGrid(p, w, L) : programWeek(p, w, L, wi),
+      w.flow || w.finisher ? h('div', { class: 'panel' },
+        w.flow ? [h('div', { class: 'eyebrow', text: 'Partner flow' }), h('p', { style: 'margin:4px 0 12px', text: w.flow })] : null,
+        w.finisher ? [h('div', { class: 'eyebrow', text: 'Core finisher' }), h('p', { style: 'margin:4px 0 12px', text: w.finisher }),
+          h('div', { class: 'fgrid', style: 'grid-template-columns:1fr 1fr' },
+            field('Core move 1', h('input', { value: L.core1 || '', autocomplete: 'off', oninput: (e) => editProg(q => { wlog(q, w.key).core1 = e.target.value; }) })),
+            field('Core move 2', h('input', { value: L.core2 || '', autocomplete: 'off', oninput: (e) => editProg(q => { wlog(q, w.key).core2 = e.target.value; }) })))] : null) : null,
+      w.home ? h('div', { class: 'panel' }, h('div', { class: 'eyebrow', text: 'Home notes' }), h('p', { style: 'margin:4px 0 0', text: w.home })) : null,
+      h('div', { class: 'panel' }, field('Notes / L-R loads / assistance', h('textarea', { value: L.notes || '', placeholder: 'e.g. Left side 15, right 20', oninput: (e) => editProg(q => { wlog(q, w.key).notes = e.target.value; }) }))),
+      p.footer ? h('p', { class: 'muted', style: 'text-align:center;font-size:.8rem;margin:16px 8px', text: p.footer }) : null);
+  }
+
+  function programWeek(p, w, L, wi) {
+    const wk = L.weeks[wi];
+    const prev = wi > 0 ? L.weeks[wi - 1] : null;
+    const dateIn = h('input', { type: 'date', value: wk.date || '', onchange: (e) => { editProg(q => { wlog(q, w.key).weeks[wi].date = e.target.value; }); } });
+    return h('div', null,
+      h('div', { class: 'wk', role: 'group', 'aria-label': 'Week' }, L.weeks.map((x, i) => h('button', { type: 'button', 'aria-pressed': String(i === wi),
+        onclick: () => { flushProg(); S.progWeek = i; render(true); } }, h('b', { text: 'Week ' + (i + 1) }), h('small', { text: x.date ? fmtMD(x.date) : weekHas(x) ? 'logged' : '—' })))),
+      h('div', { class: 'panel', style: 'margin-top:10px' },
+        h('div', { style: 'display:flex;gap:12px;align-items:end;margin-bottom:4px' }, h('div', { style: 'flex:1' }, field(`Week ${wi + 1} date`, dateIn))),
+        h('p', { class: 'muted', style: 'font-size:.8rem;margin:8px 0 2px', text: `Write the weight (${p.unit || 'lb'}) for each set. Rep targets are above each box.` }),
+        w.ex.map(ex => {
+          const vals = (wk.v[ex.n] || []);
+          const before = prev ? (prev.v[ex.n] || []) : [];
+          return h('div', { class: 'pex' },
+            h('div', { class: 'nm' }, h('span', { class: 'no', text: ex.n }), h('b', { text: ex.name })),
+            ex.note ? h('div', { class: 'note', text: ex.note }) : null,
+            h('div', { class: 'boxes' }, ex.reps.map((r, si) => h('label', { class: 'box' }, h('span', { text: String(r) }),
+              h('input', { value: vals[si] || '', class: vals[si] ? 'filled' : '', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', maxlength: '6', enterkeyhint: 'next',
+                'aria-label': `${ex.name}, set ${si + 1}, ${r} reps, weight`, onfocus: (e) => e.target.select(),
+                oninput: (e) => {
+                  const v = e.target.value.trim();
+                  e.target.classList.toggle('filled', !!v);
+                  editProg(q => {
+                    const k = wlog(q, w.key).weeks[wi];
+                    const a = (k.v[ex.n] || []).slice(); while (a.length < ex.reps.length) a.push('');
+                    a[si] = v; k.v[ex.n] = a;
+                    if (v && !k.date) { k.date = todayISO(); dateIn.value = k.date; }
+                  });
+                } })))),
+            before.some(x => x) ? h('div', { class: 'prevwk', text: `Week ${wi}: ${ex.reps.map((_, i) => before[i] || '–').join(' · ')}` }) : null);
+        })));
+  }
+
+  function programGrid(p, w, L) {
+    return h('div', { class: 'panel' }, h('div', { class: 'pgrid' }, h('table', { class: 'pg' },
+      h('thead', null, h('tr', null, h('th', { text: 'Exercise / reps' }), L.weeks.map((wk, i) => h('th', null,
+        h('button', { type: 'button', class: 'small', onclick: () => { S.progWeek = i; S.progMode = 'week'; render(true); } }, 'Week ' + (i + 1)),
+        h('div', { class: 'muted', style: 'font-size:.65rem;margin-top:3px', text: wk.date ? fmtMD(wk.date) : ' ' }))))),
+      h('tbody', null, w.ex.map(ex => h('tr', null,
+        h('td', null, h('div', { style: 'font-weight:600', text: `${ex.n} ${ex.name}` }), h('div', { class: 'muted', style: 'font-size:.66rem', text: ex.reps.join(' / ') })),
+        L.weeks.map(wk => h('td', null, h('div', { class: 'cells' }, ex.reps.map((r, si) => { const v = (wk.v[ex.n] || [])[si] || ''; return h('i', { class: v ? 'f' : '', title: `${r} reps`, text: v || '·' }); }))))))))),
+      h('p', { class: 'muted', style: 'font-size:.75rem;margin:10px 0 0', text: 'Tap a week to fill it in. Scroll sideways to see every week.' }));
+  }
+
+  function programMenu(p, w) {
+    const items = [
+      { label: `Edit Workout ${w.key} exercises`, icon: 'edit', run: () => programEditor(w.key) },
+      { label: 'Start next round', icon: 'repeat', run: async () => {
+        if (!(await confirmBox(`Start Round ${(Number(p.round) || 0) + 1}?`, 'Makes a fresh 6-week tracker with the same exercises. You can edit them after. This round stays saved.', 'Start Next Round'))) return;
+        flushProg();
+        const next = { id: uid('p'), name: p.name || 'StrongHER', round: (Number(p.round) || 0) + 1, theme: '', weeks: p.weeks || 6, startDate: todayISO(), unit: p.unit || 'lb', bodyWeight: '',
+          created: Date.now(), footer: p.footer || '', workouts: clone(p.workouts), log: {} };
+        S.progId = next.id; S.progWeek = 0; S.progMode = 'week';
+        await action(`Round ${next.round} started`, () => put('programs', next));
+      } }];
+    const others = sortedPrograms().filter(x => x.id !== p.id);
+    for (const o of others) items.push({ label: `Open Round ${o.round || '?'}${o.theme ? ' · ' + o.theme : ''}`, icon: 'cal', run: () => { flushProg(); S.progId = o.id; S.progWeek = null; render(true); } });
+    actions('StrongHER', items);
+  }
+
+  function programEditor(key) {
+    const p = curProg(); if (!p) return;
+    const w = p.workouts.find(x => x.key === key);
+    const d = { round: String(p.round || ''), theme: p.theme || '', phase: w.phase || '', where: w.where || '', ex: clone(w.ex).map(e => ({ ...e, repsText: e.reps.join(', ') })) };
+    const list = h('div', { class: 'stack' });
+    function draw() {
+      list.replaceChildren(...d.ex.map((e, i) => h('div', { class: 'rrow' },
+        h('div', { class: 'fgrid', style: 'grid-template-columns:64px 1fr' },
+          field('No.', h('input', { value: e.n, oninput: (ev) => { e.n = ev.target.value.trim(); } })),
+          field('Exercise', h('input', { value: e.name, oninput: (ev) => { e.name = ev.target.value; } }))),
+        field('Note', h('input', { value: e.note || '', placeholder: 'e.g. Per side', oninput: (ev) => { e.note = ev.target.value; } })),
+        field('Rep targets (one per set)', h('input', { value: e.repsText, placeholder: '12, 10, 8, 6', oninput: (ev) => { e.repsText = ev.target.value; } })),
+        h('div', { style: 'display:flex;gap:8px;justify-content:flex-end' },
+          h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Move up', disabled: i === 0, onclick: () => { [d.ex[i - 1], d.ex[i]] = [d.ex[i], d.ex[i - 1]]; draw(); } }, icon('up', 'ic sm')),
+          h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Move down', disabled: i === d.ex.length - 1, onclick: () => { [d.ex[i + 1], d.ex[i]] = [d.ex[i], d.ex[i + 1]]; draw(); } }, icon('down', 'ic sm')),
+          h('button', { type: 'button', class: 'iconbtn danger', 'aria-label': 'Remove exercise', onclick: () => { d.ex.splice(i, 1); draw(); } }, icon('trash', 'ic sm'))))));
+    }
+    draw();
+    const save = h('button', { type: 'button', class: 'primary small', text: 'Save', onclick: async () => {
+      const ex = d.ex.map(e => ({ n: e.n || '', name: (e.name || '').trim(), note: (e.note || '').trim(), reps: e.repsText.split(/[^0-9]+/).filter(Boolean).map(Number) })).filter(e => e.name);
+      if (ex.some(e => !e.reps.length)) { toast('Each exercise needs at least one rep target'); return; }
+      if (new Set(ex.map(e => e.n)).size !== ex.length) { toast('Exercise numbers must be different'); return; }
+      sh.close();
+      flushProg();
+      const q = clone(curProg());
+      q.round = Number(d.round) || d.round; q.theme = d.theme.trim();
+      const qw = q.workouts.find(x => x.key === key);
+      qw.phase = d.phase.trim(); qw.where = d.where.trim(); qw.ex = ex;
+      await action('StrongHER updated', () => put('programs', q));
+    } });
+    const sh = sheet(`Edit Workout ${key}`, h('div', { class: 'fgrid' },
+      h('div', { class: 'fgrid', style: 'grid-template-columns:80px 1fr' },
+        field('Round', h('input', { inputmode: 'numeric', value: d.round, oninput: (e) => { d.round = e.target.value; } })),
+        field('Theme', h('input', { value: d.theme, placeholder: 'e.g. Holiday Hustle', oninput: (e) => { d.theme = e.target.value; } }))),
+      h('div', { class: 'fgrid', style: 'grid-template-columns:1fr 1fr' },
+        field('Phase', h('input', { value: d.phase, placeholder: 'e.g. Build', oninput: (e) => { d.phase = e.target.value; } })),
+        field('Where', h('input', { value: d.where, placeholder: 'e.g. In person', oninput: (e) => { d.where = e.target.value; } }))),
+      list,
+      h('button', { type: 'button', class: 'soft', onclick: () => { const last = d.ex[d.ex.length - 1]; d.ex.push({ n: '', name: '', note: '', repsText: last ? last.repsText : '12, 10, 8' }); draw(); } }, icon('plus'), 'Add Exercise'),
+      h('p', { class: 'muted', style: 'font-size:.8rem;margin:0', text: 'Logged weights stay attached to each exercise number.' })),
+      { tall: true, right: save });
+  }
+
   // ---------- active workout ----------
   const newSet = (weight = null, reps = null, kind = 'normal', target = '') => ({ weight: weight ?? null, reps: reps ?? null, done: false, kind: kind || 'normal', target });
   function defaultName() { const hr = new Date().getHours(); return hr >= 4 && hr < 12 ? 'Morning Workout' : hr >= 12 && hr < 17 ? 'Afternoon Workout' : 'Evening Workout'; }
@@ -1019,6 +1235,8 @@
   window.addEventListener('online', () => { flush().then(() => loadAll()); });
   window.addEventListener('offline', () => { S.offline = true; render(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.sb && !S.needName) flush().then(() => loadAll()); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushProg(); });
+  window.addEventListener('pagehide', flushProg);
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(err => console.error('Service worker', err));
 
   // Hidden user log: records who opened the app and on what (read only in Supabase).
@@ -1042,6 +1260,7 @@
     S.myName = ls.get('cf-name') || '';
     if (DEMO) {
       if (!loadCache()) { S.exercises = (window.COURTFIT_LIBRARY || []).map(([name, equipment, muscle]) => ({ id: window.courtfitExerciseId(name, equipment), name, equipment, muscle })); saveCache(); }
+      if (!S.programs.length) { S.programs = [clone(STRONGHER_R4)]; saveCache(); }
       S.needName = !S.myName; S.loaded = true; render(true); return;
     }
     if (!CFG.supabaseUrl || !CFG.supabaseAnonKey) { S.setupMissing = true; render(true); return; }
@@ -1065,6 +1284,8 @@
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') logVisit(); });
     await flush();
     await loadAll();
+    // First run: add the StrongHER Round 4 tracker with Court's week-1 numbers from the paper.
+    if (!S.offline && !S.programs.length) { try { await put('programs', clone(STRONGHER_R4)); render(); } catch (e) { console.error(e); } }
     let t;
     channel = S.sb.channel('courtfit-changes', { config: { broadcast: { self: false } } })
       .on('broadcast', { event: 'changed' }, ({ payload }) => {

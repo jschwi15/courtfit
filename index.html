@@ -105,7 +105,7 @@ label.f > span { text-transform: uppercase; letter-spacing: .1em; font-size: .68
 
 /* Bottom tab bar */
 .tabbar { position: fixed; z-index: 20; left: max(10px, env(safe-area-inset-left, 0px)); right: max(10px, env(safe-area-inset-right, 0px)); bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-  max-width: 420px; margin: 0 auto; height: var(--tabbar-h); border-radius: 26px; display: grid; grid-template-columns: repeat(3, 1fr); align-items: center; padding: 0 6px; gap: 4px;
+  max-width: 480px; margin: 0 auto; height: var(--tabbar-h); border-radius: 26px; display: grid; grid-template-columns: repeat(4, 1fr); align-items: center; padding: 0 6px; gap: 2px;
   background: var(--glass); border: 1px solid var(--line); backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%); box-shadow: 0 12px 30px rgba(0, 0, 0, .35); }
 .tabbar a { position: relative; display: grid; justify-items: center; gap: 3px; color: var(--muted); text-decoration: none; font-size: .68rem; font-weight: 600; padding: 8px 0; min-height: 56px; align-content: center; transition: color .2s ease; }
 .tabbar a { border-radius: 20px; min-height: 56px; }
@@ -232,6 +232,34 @@ label.f > span { text-transform: uppercase; letter-spacing: .1em; font-size: .68
 .rtable .r:nth-child(odd):not(.h) { background: rgba(255, 196, 222, .05); }
 .rtable .r.h { font-size: .7rem; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
 .exlink { display: flex; align-items: center; gap: 14px; color: var(--pink); text-decoration: none; font: 700 1.08rem/1.25 var(--f-display); }
+
+/* StrongHER tracker */
+.shlogo { font-size: 1.6rem; font-weight: 800; letter-spacing: .01em; }
+.sh-strong { font-family: Georgia, "Times New Roman", serif; font-style: italic; font-weight: 500; letter-spacing: 0; }
+.wk { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.wk::-webkit-scrollbar { display: none; }
+.wk button { flex: none; min-width: 66px; display: grid; gap: 2px; padding: 7px 10px; border-radius: 12px; background: var(--chip); border-color: transparent; color: var(--muted); font-size: .8rem; }
+.wk button small { font-size: .66rem; font-weight: 500; }
+.wk button[aria-pressed="true"] { background: var(--grad); color: var(--on-accent); }
+.pex { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.pex:last-child { border-bottom: 0; padding-bottom: 4px; }
+.pex .nm { display: flex; gap: 8px; align-items: baseline; }
+.pex .nm b { font-weight: 600; }
+.pex .no { color: var(--muted); font-size: .72rem; font-weight: 700; min-width: 26px; font-variant-numeric: tabular-nums; }
+.pex .note { color: var(--muted); font-size: .78rem; margin-left: 34px; }
+.boxes { display: flex; gap: 8px; margin: 8px 0 0 34px; flex-wrap: wrap; }
+.box { display: grid; justify-items: center; gap: 3px; width: 58px; }
+.box span { font-size: .66rem; color: var(--muted); font-weight: 600; }
+.box input { height: 44px; text-align: center; font-weight: 700; padding: 0 2px; }
+.box input.filled { border-color: rgba(255, 92, 158, .55); background: rgba(255, 92, 158, .12); }
+.prevwk { margin: 6px 0 0 34px; font-size: .76rem; color: var(--muted); }
+.pgrid { overflow-x: auto; margin: 0 -18px; padding: 0 18px; -webkit-overflow-scrolling: touch; }
+table.pg { border-collapse: separate; border-spacing: 0; font-size: .78rem; min-width: 760px; }
+.pg th, .pg td { padding: 8px 6px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; vertical-align: middle; }
+.pg th:first-child, .pg td:first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); text-align: left; white-space: normal; min-width: 132px; max-width: 150px; box-shadow: 1px 0 0 var(--line); }
+.pg .cells { display: flex; gap: 3px; justify-content: center; }
+.pg .cells i { font-style: normal; min-width: 25px; padding: 4px 3px; border-radius: 6px; background: var(--chip); color: var(--muted); }
+.pg .cells i.f { background: rgba(255, 92, 158, .18); color: var(--ink); font-weight: 700; }
 
 /* Active workout */
 .nameinput { font: 800 1.45rem/1.2 var(--f-display); background: transparent; border: 0; padding: 0; border-radius: 0; }
@@ -365,15 +393,16 @@ label.f > span { text-transform: uppercase; letter-spacing: .1em; font-size: .68
 <nav class="tabbar" id="tabbar" aria-label="Main" hidden>
   <a href="#" data-tab="home"><svg class="ic" aria-hidden="true"><use href="#i-home"/></svg>Home</a>
   <a href="#workout" data-tab="workout"><svg class="ic" aria-hidden="true"><use href="#i-dumbbell"/></svg>Workout</a>
+  <a href="#strongher" data-tab="strongher"><svg class="ic" aria-hidden="true"><use href="#i-heart"/></svg>StrongHER</a>
   <a href="#profile" data-tab="profile"><svg class="ic" aria-hidden="true"><use href="#i-user"/></svg>Profile</a>
 </nav>
 <div id="liveslot"></div>
 <div id="installslot"></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="config.js?v=2"></script>
-<script src="library.js?v=2"></script>
+<script src="config.js?v=3"></script>
+<script src="library.js?v=3"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>
