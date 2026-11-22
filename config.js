@@ -2,6 +2,6 @@
 // to be in the browser; the data is protected by the database rules in setup.sql,
 // which require the secret code from the app link (?k=...).
 window.COURTFIT_CONFIG = {
-  supabaseUrl: '',
-  supabaseAnonKey: ''
+  supabaseUrl: 'https://wlfzrcimftovocqgsguh.supabase.co',
+  supabaseAnonKey: 'sb_publishable_wrdT9S3vx8OqCrHelVRCkw_izkosjKL'
 };
