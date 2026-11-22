@@ -610,7 +610,7 @@
         const g = items.filter(e => e.muscle === m);
         return g.length ? [h('div', { class: 'eyebrow grouphd', text: m }), h('div', { class: 'list' }, g.map(e => h('a', { class: 'li', href: '#ex-' + e.id }, thumb(e.muscle),
           h('span', { class: 'grow' }, h('span', { class: 't', text: exLabel(e) }), h('span', { class: 's', text: e.custom ? 'Custom' : e.muscle })), icon('next', 'ic sm'))))] : null;
-      }) : [h('p', { class: 'muted', text: 'No exercises match.' })]));
+      }).flat().filter(Boolean) : [h('p', { class: 'muted', text: 'No exercises match.' })]));
     }
     draw();
     return h('div', null,
