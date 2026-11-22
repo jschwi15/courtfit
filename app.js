@@ -27,7 +27,7 @@
     search: '', muscle: null, exMetric: 'heaviest', profMetric: 'workouts', rMetric: 'volume',
     calMonth: firstOfMonth(Date.now()), routinesOpen: true,
     progId: null, progWorkout: 'A', progWeek: null, progMode: 'week',
-    meals: [], saved_meals: [], mDate: null, thumbs: {}, images: {}
+    meals: [], saved_meals: [], body_scans: [], scanMetric: "pbf", mDate: null, thumbs: {}, images: {}
   };
 
   // ---------- helpers ----------
@@ -130,7 +130,7 @@
 
   // ---------- data: Supabase + offline outbox + undo ----------
   // meal_photos is not a list table: photos are fetched only when a day is shown.
-  const TABLES = ['exercises', 'routines', 'workouts', 'programs', 'meals', 'saved_meals'];
+  const TABLES = ['exercises', 'routines', 'workouts', 'programs', 'meals', 'saved_meals', 'body_scans'];
   const listOf = (t) => S[t];
   const setList = (t, arr) => { S[t] = arr; };
   const toRow = (t, obj) => { const data = clone(obj); delete data.id; return { id: obj.id, data }; };
@@ -141,9 +141,9 @@
     if (op.op === 'put') arr.push(fromRow(op.table, op.row));
     setList(op.table, arr);
   }
-  function saveCache() { ls.set('cf-cache', JSON.stringify({ exercises: S.exercises, routines: S.routines, workouts: S.workouts, programs: S.programs, meals: S.meals, saved_meals: S.saved_meals, at: Date.now() })); }
+  function saveCache() { ls.set('cf-cache', JSON.stringify({ exercises: S.exercises, routines: S.routines, workouts: S.workouts, programs: S.programs, meals: S.meals, saved_meals: S.saved_meals, body_scans: S.body_scans, at: Date.now() })); }
   function loadCache() {
-    try { const c = JSON.parse(ls.get('cf-cache') || 'null'); if (c) { S.exercises = c.exercises || []; S.routines = c.routines || []; S.workouts = c.workouts || []; S.programs = c.programs || []; S.meals = c.meals || []; S.saved_meals = c.saved_meals || []; return true; } } catch { }
+    try { const c = JSON.parse(ls.get('cf-cache') || 'null'); if (c) { S.exercises = c.exercises || []; S.routines = c.routines || []; S.workouts = c.workouts || []; S.programs = c.programs || []; S.meals = c.meals || []; S.saved_meals = c.saved_meals || []; S.body_scans = c.body_scans || []; return true; } } catch { }
     return false;
   }
   const saveOutbox = () => ls.set('cf-outbox', JSON.stringify(S.outbox));
@@ -202,7 +202,7 @@
     try {
       await Promise.all(TABLES.map(loadTable));
       for (const op of S.outbox) applyLocal(op);
-      S.loaded = true; S.offline = S.outbox.length > 0; saveCache();
+      S.loaded = true; S.synced = true; S.offline = S.outbox.length > 0; saveCache();
     } catch (err) {
       console.error(err);
       if (!S.loaded && loadCache()) { for (const op of S.outbox) applyLocal(op); }
@@ -269,6 +269,7 @@
       'No connection. Showing what is saved on this phone.',
       S.outbox.length ? ` ${S.outbox.length} change${S.outbox.length === 1 ? '' : 's'} will sync when you are back online.` : '') : null;
     $app.replaceChildren(...[banner, node].filter(Boolean));
+    if (S.loaded) { clearTimeout(S.badgeTimer); S.badgeTimer = setTimeout(checkAchievements, 700); }
     if (!force) window.scrollTo(0, y);
     updateChrome();
   }
@@ -371,7 +372,7 @@
     const wrap = h('div', { class: 'sheetwrap', onclick: (ev) => { if (ev.target === wrap) api.close(); } }, box);
     const api = {
       el: box, onClose: null,
-      close() { if (!wrap.isConnected) return; wrap.remove(); const i = openSheets.indexOf(api); if (i >= 0) openSheets.splice(i, 1); if (api.onClose) api.onClose(); }
+      close() { if (!wrap.isConnected) return; wrap.remove(); const i = openSheets.indexOf(api); if (i >= 0) openSheets.splice(i, 1); if (api.onClose) api.onClose(); if (!openSheets.length) setTimeout(checkAchievements, 450); }
     };
     document.body.append(wrap);
     openSheets.push(api);
@@ -521,7 +522,7 @@
           : h('p', { class: 'muted', style: 'margin:8px 0 12px', text: pts.length ? 'Do this routine one more time to see your progress chart.' : 'Your progress chart appears after you do this routine twice.' }),
         h('div', { class: 'pills', style: 'margin-top:8px' }, pill('volume', 'Volume'), pill('reps', 'Reps'), pill('duration', 'Duration'))),
       sectionhd('Exercises', h('button', { type: 'button', class: 'link', onclick: () => routineEditor(r) }, 'Edit Routine')),
-      (r.items || []).map(it => {
+      renderRuns(r.items || [], (it) => {
         const ex = findEx(it.exerciseId);
         return h('div', { style: 'margin-bottom:18px' },
           h('a', { class: 'exlink', href: '#ex-' + it.exerciseId }, thumb(ex?.muscle, 'lg'), exLabel(ex)),
@@ -531,13 +532,133 @@
       }));
   }
 
+  // ---------- achievements ----------
+  // Worked out from the data each time (nothing extra stored online). The phone remembers
+  // which ones it has already celebrated in localStorage ('cf-badges-seen').
+  function longestRun(sorted, isNext) { let best = 0, run = 0; sorted.forEach((x, i) => { run = i && isNext(sorted[i - 1], x) ? run + 1 : 1; best = Math.max(best, run); }); return best; }
+  function prCount() {
+    const best = {}; let n = 0;
+    for (const w of [...S.workouts].sort((a, b) => a.start - b.start)) for (const e of w.exercises || []) {
+      const top = Math.max(0, ...doneSets(e).map(s => s.weight || 0)); if (!top) continue;
+      if (best[e.exerciseId] && top > best[e.exerciseId]) n++;
+      if (!best[e.exerciseId] || top > best[e.exerciseId]) best[e.exerciseId] = top;
+    }
+    return n;
+  }
+  function achievements() {
+    const act = activityMap();
+    const nextDay = (a, b) => shiftDay(a, 1) === b;
+    const trainWeeks = [...new Set(Object.keys(act).filter(k => act[k].w.length || act[k].s.length).map(k => startOfWeek(new Date(k + 'T00:00').getTime())))].sort((a, b) => a - b);
+    const weekRun = longestRun(trainWeeks, (a, b) => Math.round((b - a) / DAY) === 7);
+    const foodDays = Object.keys(act).filter(k => act[k].m.length).sort();
+    const g = goals();
+    const proteinDays = foodDays.filter(k => totals(act[k].m).p >= g.p);
+    const shSessions = Object.values(act).reduce((n, a) => n + a.s.length, 0);
+    const roundDone = S.programs.some(p => (p.workouts || []).some(w => { const wk = (p.log || {})[w.key]?.weeks || []; return wk.length >= (p.weeks || 6) && weekHas(wk[(p.weeks || 6) - 1] || {}); }));
+    const scans = sortedScans(), first = scans[0], last = scans[scans.length - 1];
+    const muscleUp = scans.length >= 2 && has(first.smm) && has(last.smm) && Number(last.smm) > Number(first.smm);
+    const fatDown = scans.length >= 2 && has(first.pbf) && has(last.pbf) && Number(last.pbf) < Number(first.pbf);
+    const supersets = S.workouts.filter(w => supersetRuns(w.exercises || []).some(r => r.group)).length;
+    const n = S.workouts.length, prs = prCount();
+    return [
+      ['w1', '🌱', 'First workout', n, 1], ['w10', '💪', '10 workouts', n, 10], ['w25', '🔥', '25 workouts', n, 25], ['w50', '👑', '50 workouts', n, 50], ['w100', '💎', '100 workouts', n, 100],
+      ['pr1', '🏆', 'First PR', prs, 1], ['pr10', '🥇', '10 PRs', prs, 10], ['pr25', '🌟', '25 PRs', prs, 25],
+      ['st2', '✨', '2-week streak', weekRun, 2], ['st4', '🌸', '4-week streak', weekRun, 4], ['st8', '🦋', '8-week streak', weekRun, 8], ['st12', '🌈', '12-week streak', weekRun, 12],
+      ['sh1', '💗', 'First StrongHER session', shSessions, 1], ['sh10', '💞', '10 StrongHER sessions', shSessions, 10], ['shr', '🎀', 'Finished a 6-week round', roundDone ? 1 : 0, 1],
+      ['m1', '🍓', 'First food logged', foodDays.length, 1], ['m7', '🥗', '7 days of food in a row', longestRun(foodDays, nextDay), 7], ['p7', '🥚', 'Protein goal 7 days in a row', longestRun(proteinDays, nextDay), 7],
+      ['sm1', '♡', 'First saved meal', S.saved_meals.length, 1], ['ss1', '🔗', 'First superset workout', supersets, 1],
+      ['b1', '📊', 'First InBody scan', scans.length, 1], ['b3', '📈', '3 InBody scans', scans.length, 3], ['bm', '🌷', 'More muscle than your first scan', muscleUp ? 1 : 0, 1], ['bf', '🍑', 'Lower body fat than your first scan', fatDown ? 1 : 0, 1]
+    ].map(([id, em, name, have, need]) => ({ id, em, name, have: Math.min(have, need), need, on: have >= need }));
+  }
+  function achievementsPanel() {
+    const list = achievements(), on = list.filter(a => a.on);
+    // Earned first, then the closest ones still to go.
+    const locked = list.filter(a => !a.on).sort((a, b) => b.have / b.need - a.have / a.need);
+    const shown = S.badgesAll ? [...on, ...locked] : [...on.slice(-6), ...locked.slice(0, Math.max(3, 6 - Math.min(on.length, 6)))];
+    const badge = (a) => h('div', { class: 'badge' + (a.on ? ' on' : ''), role: 'img', 'aria-label': `${a.name}${a.on ? ', earned' : `, ${a.have} of ${a.need}`}` },
+      h('span', { class: 'em', 'aria-hidden': 'true', text: a.em }), h('b', { text: a.name }),
+      a.on ? h('small', { text: 'Earned' }) : a.need > 1 ? [h('span', { class: 'bar' }, h('i', { style: `width:${Math.round(a.have / a.need * 100)}%` })), h('small', { text: `${a.have} / ${a.need}` })] : h('small', { text: 'Not yet' }));
+    return h('div', { class: 'panel' },
+      h('div', { class: 'hd' }, h('h2', { text: 'Achievements' }), h('span', { class: 'muted', style: 'font-size:.85rem', text: `${on.length} of ${list.length}` })),
+      h('div', { class: 'badges' }, shown.map(badge)),
+      h('button', { type: 'button', class: 'link', onclick: () => { S.badgesAll = !S.badgesAll; render(true); } }, S.badgesAll ? 'Show fewer' : `See all ${list.length}`));
+  }
+  function confetti() {
+    const box = h('div', { class: 'confetti', 'aria-hidden': 'true' });
+    const colors = ['#f7a3c7', '#d3b8f5', '#ffc4ad', '#ffffff', '#f490bb', '#b9e4d6', '#fde68a'];
+    for (let i = 0; i < 80; i++) {
+      const p = h('i'); p.style.left = (Math.random() * 100).toFixed(1) + '%'; p.style.background = colors[i % colors.length];
+      p.style.animationDuration = (1.8 + Math.random() * 1.8).toFixed(2) + 's'; p.style.animationDelay = (Math.random() * .6).toFixed(2) + 's';
+      p.style.transform = `rotate(${Math.round(Math.random() * 360)}deg)`; box.append(p);
+    }
+    document.body.append(box); setTimeout(() => box.remove(), 4500);
+  }
+  function checkAchievements() {
+    if (!S.synced || S.needName) return;
+    const list = achievements(), earned = list.filter(a => a.on).map(a => a.id);
+    let seen = null; try { seen = JSON.parse(ls.get('cf-badges-seen') || 'null'); } catch { }
+    if (!Array.isArray(seen)) { ls.set('cf-badges-seen', JSON.stringify(earned)); return; } // first run on this phone: no fanfare for old ones
+    const fresh = list.filter(a => a.on && !seen.includes(a.id));
+    if (!fresh.length) return;
+    const a = document.activeElement;
+    if (openSheets.length || S.view.name === 'active' || (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName))) return; // celebrate at a calmer moment
+    ls.set('cf-badges-seen', JSON.stringify([...new Set([...seen, ...earned])]));
+    confetti();
+    if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+    const sh = sheet(null, h('div', { style: 'text-align:center;display:grid;gap:12px;padding:6px 0 4px' },
+      h('div', { style: 'font-size:3.2rem;line-height:1', 'aria-hidden': 'true', text: fresh.map(x => x.em).join(' ') }),
+      h('h2', { style: 'font-size:1.5rem', text: fresh.length === 1 ? 'New achievement!' : `${fresh.length} new achievements!` }),
+      h('div', { class: 'stack', style: 'gap:6px' }, fresh.map(x => h('b', { text: x.name }))),
+      h('p', { class: 'muted', style: 'margin:0', text: 'See them all on your Profile.' }),
+      h('button', { type: 'button', class: 'primary big', text: 'Yay! 💖', onclick: () => sh.close() })));
+  }
+
+  // ---------- supersets ----------
+  // Exercises next to each other with the same `group` form a superset (like StrongHER's 1.1 + 1.2).
+  function supersetRuns(items) {
+    const runs = [];
+    items.forEach((it, i) => { const g = it.group || null, last = runs[runs.length - 1]; if (g && last && last.group === g) last.idxs.push(i); else runs.push({ group: g, idxs: [i] }); });
+    return runs.map(r => (r.group && r.idxs.length > 1 ? r : { group: null, idxs: r.idxs }));
+  }
+  function normalizeGroups(items) {
+    const keep = new Set(); for (const r of supersetRuns(items)) if (r.group) r.idxs.forEach(i => keep.add(i));
+    items.forEach((it, i) => { if (!keep.has(i) && it.group) delete it.group; });
+  }
+  const linkedToNext = (items, i) => !!(items[i] && items[i + 1] && items[i].group && items[i].group === items[i + 1].group);
+  function toggleLink(items, i) {
+    if (!items[i + 1]) return;
+    if (linkedToNext(items, i)) {
+      const g = items[i].group, ng = uid('g');
+      for (let j = i + 1; j < items.length && items[j].group === g; j++) items[j].group = ng;
+    } else {
+      const g = items[i].group || uid('g'), old = items[i + 1].group;
+      items[i].group = g;
+      if (old) { for (let j = i + 1; j < items.length && items[j].group === old; j++) items[j].group = g; } else items[i + 1].group = g;
+    }
+    normalizeGroups(items);
+  }
+  // Rest only after the last exercise of a superset round.
+  function endsRound(items, entry) {
+    const idx = items.indexOf(entry), run = supersetRuns(items).find(r => r.idxs.includes(idx));
+    return !run || !run.group || run.idxs[run.idxs.length - 1] === idx;
+  }
+  function renderRuns(items, fn) {
+    let letter = 0;
+    return supersetRuns(items).map(r => r.group
+      ? h('div', { class: 'ssgroup' }, h('div', { class: 'sslabel' }, icon('repeat', 'ic sm'), `Superset ${String.fromCharCode(65 + letter++)} · ${r.idxs.length} exercises`), r.idxs.map(i => fn(items[i], i)))
+      : r.idxs.map(i => fn(items[i], i)));
+  }
+
   // ---------- routine editor ----------
   function routineEditor(r) {
     const d = { name: r ? r.name : '', items: r ? clone(r.items || []) : [] };
     const list = h('div', { class: 'stack' });
     const nameIn = h('input', { value: d.name, placeholder: 'e.g. Booty Builder', autocomplete: 'off', oninput: (e) => { d.name = e.target.value; } });
     function draw() {
-      list.replaceChildren(...(d.items.length ? d.items.map((it, i) => h('div', { class: 'rrow' },
+      normalizeGroups(d.items);
+      const linkToggle = (i) => h('div', { class: 'linkbtn' }, h('button', { type: 'button', 'aria-pressed': String(linkedToNext(d.items, i)), onclick: () => { toggleLink(d.items, i); draw(); } },
+        icon('repeat', 'ic sm'), linkedToNext(d.items, i) ? 'Superset · tap to unlink' : 'Make superset with next'));
+      list.replaceChildren(...(d.items.length ? d.items.flatMap((it, i) => [h('div', { class: 'rrow' },
         h('div', { class: 'exhd' }, h('a', { href: null, style: 'cursor:default' }, exLabelId(it.exerciseId)),
           h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Move up', disabled: i === 0, onclick: () => { [d.items[i - 1], d.items[i]] = [d.items[i], d.items[i - 1]]; draw(); } }, icon('up', 'ic sm')),
           h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Move down', disabled: i === d.items.length - 1, onclick: () => { [d.items[i + 1], d.items[i]] = [d.items[i], d.items[i + 1]]; draw(); } }, icon('down', 'ic sm')),
@@ -549,7 +670,7 @@
             h('input', { inputmode: 'decimal', placeholder: '—', 'aria-label': `Set ${si + 1} weight`, value: s.weight ? fw(s.weight) : '', style: 'text-align:center',
               oninput: (e) => { const v = parseFloat(e.target.value.replace(',', '.')); s.weight = isFinite(v) && v > 0 ? store(v) : null; } }),
             h('input', { placeholder: '8-10', 'aria-label': `Set ${si + 1} rep range`, value: s.reps || '', style: 'text-align:center', oninput: (e) => { s.reps = e.target.value.trim(); } })))),
-        h('button', { type: 'button', class: 'soft small', onclick: () => { const l = it.sets[it.sets.length - 1]; it.sets.push(l ? { ...l } : { weight: null, reps: '8-10' }); draw(); } }, icon('plus', 'ic sm'), 'Add Set')))
+        h('button', { type: 'button', class: 'soft small', onclick: () => { const l = it.sets[it.sets.length - 1]; it.sets.push(l ? { ...l } : { weight: null, reps: '8-10' }); draw(); } }, icon('plus', 'ic sm'), 'Add Set')), i < d.items.length - 1 ? linkToggle(i) : null]).filter(Boolean)
         : [h('p', { class: 'muted', text: 'No exercises yet.' })]));
     }
     draw();
@@ -670,18 +791,18 @@
     return h('div', null,
       topbar(h('button', { type: 'button', class: 'roundbtn', 'aria-label': 'Back', onclick: () => goBack('#') }, icon('back')), h('span', { class: 'spacer' }),
         h('button', { type: 'button', class: 'roundbtn', 'aria-label': 'Workout options', onclick: () => actions(w.name, [
-          { label: 'Edit Workout', icon: 'edit', run: () => startWorkout(w.name, (w.exercises || []).map(e => ({ exerciseId: e.exerciseId, notes: e.notes || '',
+          { label: 'Edit Workout', icon: 'edit', run: () => startWorkout(w.name, (w.exercises || []).map(e => ({ exerciseId: e.exerciseId, group: e.group || null, notes: e.notes || '',
             sets: (e.sets || []).map(s => ({ ...newSet(s.weight, s.reps, s.kind), done: true })) })), w.routineId, { edit: w }) },
           { label: 'Save as Routine', icon: 'edit', run: () => action('Saved as routine', () => put('routines', { id: uid('r'), name: w.name, by: S.myName, created: Date.now(), order: S.routines.length,
-            items: (w.exercises || []).map(e => ({ exerciseId: e.exerciseId, sets: doneSets(e).map(s => ({ weight: s.weight || null, reps: s.reps ? String(s.reps) : '' })) })) })) },
+            items: (w.exercises || []).map(e => ({ exerciseId: e.exerciseId, group: e.group || null, sets: doneSets(e).map(s => ({ weight: s.weight || null, reps: s.reps ? String(s.reps) : '' })) })) })) },
           { label: 'Delete Workout', icon: 'trash', danger: true, run: async () => { if (await confirmBox('Delete this workout?', 'You can undo right after.', 'Delete Workout', true)) { await action('Workout deleted', () => del('workouts', w.id)); go(''); } } }
         ]) }, icon('dots'))),
       h('div', { class: 'panel' }, h('h1', { style: 'font-size:1.5rem', text: w.name }), h('p', { class: 'muted', style: 'margin:2px 0 14px', text: fmtWhen(w.start) }), tally(w),
         w.notes ? h('p', { style: 'margin:12px 0 0;white-space:pre-wrap', text: w.notes }) : null),
-      (w.exercises || []).map(e => h('div', { class: 'panel' },
+      renderRuns(w.exercises || [], e => h('div', { class: 'panel' },
         h('a', { class: 'exlink', href: '#ex-' + e.exerciseId, style: 'margin-bottom:8px' }, thumb(findEx(e.exerciseId)?.muscle, 'sm'), exLabelId(e.exerciseId)),
         e.notes ? h('p', { class: 'muted', style: 'margin:0 0 6px', text: e.notes }) : null, setTable(e))),
-      h('button', { type: 'button', class: 'primary big', style: 'margin-top:16px', onclick: () => startWorkout(w.name, (w.exercises || []).map(e => ({ exerciseId: e.exerciseId, sets: doneSets(e).map(s => newSet(s.weight, s.reps, s.kind)) })), w.routineId) }, icon('repeat'), 'Repeat Workout'));
+      h('button', { type: 'button', class: 'primary big', style: 'margin-top:16px', onclick: () => startWorkout(w.name, (w.exercises || []).map(e => ({ exerciseId: e.exerciseId, group: e.group || null, sets: doneSets(e).map(s => newSet(s.weight, s.reps, s.kind)) })), w.routineId) }, icon('repeat'), 'Repeat Workout'));
   }
 
   // ---------- profile ----------
@@ -710,7 +831,9 @@
       h('div', { class: 'tiles' },
         tile('flame', 'Week streak', String(streaks(activityMap()).weeks)), tile('cal', 'This month', String(month)),
         tile('weight', 'Total volume', fvol(list.reduce((a, w) => a + volumeOf(w), 0))), tile('clock', 'Total time', fmtDur(list.reduce((a, w) => a + durOf(w), 0)))),
-      h('div', { class: 'panel', style: 'margin-top:12px' }, h('div', { class: 'hd' }, h('h2', { text: 'Last 12 weeks' })),
+      h('div', { style: 'margin-top:12px' }, scansPanel()),
+      achievementsPanel(),
+      h('div', { class: 'panel' }, h('div', { class: 'hd' }, h('h2', { text: 'Last 12 weeks' })),
         h('div', { class: 'pills', style: 'margin:10px 0' }, pill('workouts', 'Workouts'), pill('minutes', 'Minutes'), pill('volume', 'Volume')),
         svgFrom(barChart(weekly))),
       h('div', { class: 'panel' }, h('div', { class: 'hd' }, h('h2', { text: 'Muscle split' }), h('span', { class: 'muted', style: 'font-size:.8rem', text: 'Sets, last 30 days' })),
@@ -727,12 +850,13 @@
   // Everything logged, by day: workouts, StrongHER sessions (by each week's date) and macros.
   function activityMap() {
     const map = {};
-    const at = (iso) => (map[iso] = map[iso] || { w: [], s: [], m: [] });
+    const at = (iso) => (map[iso] = map[iso] || { w: [], s: [], m: [], b: [] });
     for (const w of S.workouts) at(isoOf(new Date(w.start))).w.push(w);
     for (const p of S.programs) for (const wk of p.workouts || []) {
       ((p.log || {})[wk.key]?.weeks || []).forEach((x, i) => { if (x && x.date && weekHas(x)) at(x.date).s.push({ p, key: wk.key, phase: wk.phase, week: i }); });
     }
     for (const m of S.meals) if (m.date) at(m.date).m.push(m);
+    for (const b of S.body_scans) if (b.date) at(b.date).b.push(b);
     return map;
   }
   // Weeks in a row with a workout or StrongHER session; days in a row with food logged.
@@ -753,13 +877,13 @@
     for (let i = 0; i < 7; i++) cells.push(h('div', { class: 'wd', 'aria-hidden': 'true', text: new Date(2024, 0, 7 + i).toLocaleDateString(undefined, { weekday: 'narrow' }) }));
     for (let i = 0; i < off; i++) cells.push(h('div'));
     for (let d = 1; d <= count; d++) {
-      const iso = isoOf(new Date(y, mo, d)), a = map[iso] || { w: [], s: [], m: [] };
+      const iso = isoOf(new Date(y, mo, d)), a = map[iso] || { w: [], s: [], m: [], b: [] };
       const trained = a.w.length || a.s.length;
-      const what = [a.w.length && 'workout', a.s.length && 'StrongHER', a.m.length && 'food logged'].filter(Boolean);
+      const what = [a.w.length && 'workout', a.s.length && 'StrongHER', a.m.length && 'food logged', a.b.length && 'InBody scan'].filter(Boolean);
       cells.push(h('button', { type: 'button', class: 'dy' + (trained ? ' on' : '') + (iso === today ? ' today' : ''), onclick: () => daySheet(iso, a),
         'aria-label': fmtDate(new Date(iso + 'T00:00'), { month: 'long', day: 'numeric' }) + (what.length ? ': ' + what.join(', ') : '') },
         h('span', { text: String(d) }),
-        h('span', { class: 'dots', 'aria-hidden': 'true' }, a.w.length ? h('i', { class: 'dw' }) : null, a.s.length ? h('i', { class: 'ds' }) : null, a.m.length ? h('i', { class: 'dm' }) : null)));
+        h('span', { class: 'dots', 'aria-hidden': 'true' }, a.w.length ? h('i', { class: 'dw' }) : null, a.s.length ? h('i', { class: 'ds' }) : null, a.m.length ? h('i', { class: 'dm' }) : null, a.b.length ? h('i', { class: 'db' }) : null)));
     }
     const st = streaks(map);
     return h('div', null,
@@ -768,7 +892,7 @@
         h('b', { text: m.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) }),
         h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Next month', onclick: () => shift(1) }, icon('next'))),
       h('div', { class: 'cal' }, cells),
-      h('div', { class: 'legend' }, h('span', null, h('i', { class: 'dw' }), 'Workout'), h('span', null, h('i', { class: 'ds' }), 'StrongHER'), h('span', null, h('i', { class: 'dm' }), 'Macros')),
+      h('div', { class: 'legend' }, h('span', null, h('i', { class: 'dw' }), 'Workout'), h('span', null, h('i', { class: 'ds' }), 'StrongHER'), h('span', null, h('i', { class: 'dm' }), 'Macros'), h('span', null, h('i', { class: 'db' }), 'InBody')),
       h('div', { class: 'tally', style: 'margin-top:12px' },
         h('div', null, h('span', { text: 'Training streak' }), h('b', { text: `${st.weeks} week${st.weeks === 1 ? '' : 's'}` })),
         h('div', null, h('span', { text: 'Food log streak' }), h('b', { text: `${st.days} day${st.days === 1 ? '' : 's'}` })),
@@ -783,7 +907,155 @@
       a.m.length ? h('button', { type: 'button', class: 'card', onclick: () => go2(() => { S.mDate = iso; go('#macros'); }) },
         h('div', { class: 'eyebrow', text: 'Macros' }), h('h3', { text: `${Math.round(t.cal).toLocaleString()} kcal · ${a.m.length} food${a.m.length === 1 ? '' : 's'}` }),
         h('div', { class: 'meta', text: `Protein ${Math.round(t.p)} g · Carbs ${Math.round(t.c)} g · Fat ${Math.round(t.f)} g` })) : null,
-      !a.w.length && !a.s.length && !a.m.length ? h('p', { class: 'muted', text: 'Nothing logged this day.' }) : null));
+      (a.b || []).map(b => h('button', { type: 'button', class: 'card', onclick: () => go2(() => scanDetail(b.id)) },
+        h('div', { class: 'eyebrow', text: 'InBody scan' }), h('h3', { text: scanHeadline(b) }))),
+      !a.w.length && !a.s.length && !a.m.length && !a.b.length ? h('p', { class: 'muted', text: 'Nothing logged this day.' }) : null));
+  }
+
+  // ---------- InBody body scans ----------
+  // body_scans rows: { date, weight, smm, bfm (masses stored in lb), pbf %, bmi, vfl, bmr kcal, score,
+  //   seg: { la, ra, tr, ll, rl } (lean mass in lb, optional), notes, hasPhoto }.
+  // The printout photo is stored like meal photos (meal_photos table, same id as the scan).
+  const SCAN_FIELDS = [
+    { k: 'weight', label: 'Weight', mass: true, better: 0 },
+    { k: 'smm', label: 'Skeletal Muscle Mass', short: 'Muscle', mass: true, better: 1 },
+    { k: 'bfm', label: 'Body Fat Mass', short: 'Fat mass', mass: true, better: -1 },
+    { k: 'pbf', label: 'Percent Body Fat', short: 'Body fat', unit: '%', better: -1 },
+    { k: 'bmi', label: 'BMI', better: 0 },
+    { k: 'vfl', label: 'Visceral Fat Level', short: 'Visceral fat', better: -1 },
+    { k: 'bmr', label: 'Basal Metabolic Rate', short: 'BMR', unit: 'kcal', better: 0 },
+    { k: 'score', label: 'InBody Score', short: 'Score', better: 1 }
+  ];
+  const SEG = [['la', 'Left arm'], ['ra', 'Right arm'], ['tr', 'Trunk'], ['ll', 'Left leg'], ['rl', 'Right leg']];
+  const sortedScans = () => [...S.body_scans].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.at || 0) - (b.at || 0)));
+  const has = (v) => v !== '' && v != null && isFinite(Number(v));
+  const scanVal = (f, v) => !has(v) ? '—' : f.mass ? fwu(Number(v)) : `${num1(Number(v))}${f.unit ? (f.unit === '%' ? '%' : ' ' + f.unit) : ''}`;
+  function scanHeadline(b) {
+    const parts = [has(b.weight) && fwu(b.weight), has(b.pbf) && `${num1(b.pbf)}% body fat`, has(b.smm) && `${fwu(b.smm)} muscle`].filter(Boolean);
+    return parts.join(' · ') || 'Scan';
+  }
+  // Change since the previous scan, e.g. "+0.8 lb muscle". Green when it moved the good way.
+  function scanDelta(f, cur, prev) {
+    if (!prev || !has(cur[f.k]) || !has(prev[f.k])) return null;
+    const d = Number(cur[f.k]) - Number(prev[f.k]);
+    if (Math.abs(d) < 0.05) return { text: 'no change', cls: '' };
+    const shown = f.mass ? num1(disp(Math.abs(d))) + ' ' + unit() : num1(Math.abs(d)) + (f.unit === '%' ? '%' : '');
+    const good = f.better === 0 ? null : (d > 0) === (f.better > 0);
+    return { text: `${d > 0 ? '+' : '−'}${shown}`, cls: good == null ? '' : good ? 'good' : 'bad' };
+  }
+
+  function scansPanel() {
+    const list = sortedScans(), last = list[list.length - 1], prev = list[list.length - 2];
+    const metric = SCAN_FIELDS.find(f => f.k === S.scanMetric) || SCAN_FIELDS[3];
+    const pts = list.filter(b => has(b[metric.k])).map(b => ({ x: new Date(b.date + 'T12:00').getTime(), y: metric.mass ? disp(Number(b[metric.k])) : Number(b[metric.k]) }));
+    if (last && last.hasPhoto) wantThumbs([last.id]);
+    const pill = (f) => h('button', { type: 'button', 'aria-pressed': String(f.k === metric.k), onclick: () => { S.scanMetric = f.k; render(true); } }, f.short || f.label);
+    return h('div', { class: 'panel' },
+      h('div', { class: 'hd' }, h('h2', { text: 'InBody scans' }),
+        h('button', { type: 'button', class: 'small primary', onclick: () => scanSheet(null) }, icon('plus', 'ic sm'), 'Add scan')),
+      !last ? h('div', { class: 'empty', style: 'margin-top:12px;padding:24px 16px' }, h('h2', { style: 'font-size:1.1rem', text: 'No scans yet' }),
+        h('p', { text: 'After each InBody scan, snap the printout and add the main numbers to see your progress over time.' }))
+      : [
+        h('button', { type: 'button', class: 'scanlast', onclick: () => scanDetail(last.id) },
+          last.hasPhoto && S.thumbs[last.id] ? h('img', { src: S.thumbs[last.id], alt: 'InBody printout photo', class: 'mthumb' }) : h('span', { class: 'mthumb ph', 'aria-hidden': 'true' }, icon('weight')),
+          h('span', { class: 'grow' }, h('span', { class: 't', text: 'Latest scan' }), h('span', { class: 's', text: fmtDate(new Date(last.date + 'T12:00')) + (prev ? ` · vs ${fmtDate(new Date(prev.date + 'T12:00'), { month: 'short', day: 'numeric' })}` : '') })),
+          icon('next', 'ic sm')),
+        h('div', { class: 'scangrid' }, SCAN_FIELDS.filter(f => ['weight', 'smm', 'pbf', 'bfm'].includes(f.k)).map(f => {
+          const dl = scanDelta(f, last, prev);
+          return h('div', { class: 'scanstat' }, h('span', { text: f.short || f.label }), h('b', { text: scanVal(f, last[f.k]) }), dl ? h('small', { class: dl.cls, text: dl.text }) : null);
+        })),
+        list.length >= 2 ? [h('div', { class: 'pills', style: 'margin:14px 0 8px' }, SCAN_FIELDS.filter(f => ['weight', 'smm', 'pbf', 'bfm', 'score'].includes(f.k)).map(pill)),
+          pts.length >= 2 ? svgFrom(lineChart(pts, metric.mass ? unit() : metric.unit === '%' ? '%' : '', true)) : h('p', { class: 'muted', text: 'Add this number to two or more scans to see a chart.' })] : null,
+        h('button', { type: 'button', class: 'link', onclick: scansList }, `All scans (${list.length})`)]);
+  }
+
+  function scansList() {
+    const list = sortedScans().reverse();
+    wantThumbs(list.filter(b => b.hasPhoto).map(b => b.id));
+    sheet('InBody scans', h('div', { class: 'stack' }, list.map((b, i) => {
+      const prev = list[i + 1];
+      const dl = scanDelta(SCAN_FIELDS[3], b, prev);
+      return h('button', { type: 'button', class: 'mcard', onclick: () => scanDetail(b.id) },
+        b.hasPhoto && S.thumbs[b.id] ? h('img', { src: S.thumbs[b.id], alt: 'InBody printout photo', class: 'mthumb' }) : h('span', { class: 'mthumb ph', 'aria-hidden': 'true' }, icon('weight')),
+        h('span', { class: 'grow' }, h('span', { class: 't', text: fmtDate(new Date(b.date + 'T12:00')) }), h('span', { class: 's', text: scanHeadline(b) }),
+          dl ? h('span', { class: 'mchips' }, h('i', { class: 'mp', text: `Body fat ${dl.text}` })) : null),
+        icon('next', 'ic sm'));
+    })), { tall: true });
+  }
+
+  function scanDetail(id) {
+    const b = S.body_scans.find(x => x.id === id); if (!b) return;
+    const list = sortedScans(), prev = list[list.findIndex(x => x.id === id) - 1];
+    const photo = b.hasPhoto ? h('img', { class: 'fullphoto', alt: 'InBody printout photo', src: S.images[id] || S.thumbs[id] || '' }) : null;
+    if (b.hasPhoto && !S.images[id]) getImage(id).then(src => { if (src && photo) photo.src = src; }).catch(() => {});
+    const row = (label, v, dl) => h('div', { class: 'r', style: 'grid-template-columns:1fr auto auto;gap:10px' }, h('span', { text: label }), h('b', { text: v }),
+      h('small', { class: 'delta ' + (dl ? dl.cls : ''), text: dl ? dl.text : '' }));
+    const segs = SEG.filter(([k]) => b.seg && has(b.seg[k]));
+    const sh = sheet(`InBody · ${fmtDate(new Date(b.date + 'T12:00'), { month: 'short', day: 'numeric', year: 'numeric' })}`, h('div', { class: 'fgrid' },
+      photo,
+      prev ? h('p', { class: 'muted', style: 'margin:0;font-size:.82rem', text: `Changes are since ${fmtDate(new Date(prev.date + 'T12:00'), { month: 'short', day: 'numeric' })}.` }) : null,
+      h('div', { class: 'sets' }, SCAN_FIELDS.filter(f => has(b[f.k])).map(f => row(f.label, scanVal(f, b[f.k]), scanDelta(f, b, prev)))),
+      segs.length ? h('div', null, h('div', { class: 'eyebrow', style: 'margin-bottom:6px', text: 'Segmental lean mass' }),
+        h('div', { class: 'sets' }, segs.map(([k, l]) => row(l, fwu(Number(b.seg[k])), prev && prev.seg && has(prev.seg[k]) ? scanDelta({ k, mass: true, better: 1 }, b.seg, prev.seg) : null)))) : null,
+      b.notes ? h('p', { style: 'margin:0;white-space:pre-wrap', text: b.notes }) : null,
+      h('div', { class: 'duo' },
+        h('button', { type: 'button', style: 'justify-content:center', onclick: () => { sh.close(); scanSheet(b); } }, icon('edit', 'ic sm'), 'Edit'),
+        h('button', { type: 'button', class: 'danger', style: 'justify-content:center', onclick: async () => {
+          if (!(await confirmBox('Delete this scan?', 'You can undo right after.', 'Delete', true))) return;
+          sh.close();
+          await action('Scan deleted', () => del('body_scans', b.id));
+          if (b.hasPhoto) setTimeout(() => { if (!S.body_scans.some(x => x.id === b.id)) deletePhoto(b.id).catch(() => {}); }, 9000);
+        } }, icon('trash', 'ic sm'), 'Delete'))), { tall: !!b.hasPhoto });
+  }
+
+  function scanSheet(existing) {
+    const d = { date: existing ? existing.date : todayISO(), notes: existing ? existing.notes || '' : '', photo: null, removed: false, seg: { ...(existing && existing.seg || {}) } };
+    const vals = {};
+    for (const f of SCAN_FIELDS) vals[f.k] = existing && has(existing[f.k]) ? (f.mass ? fw(Number(existing[f.k])) : String(existing[f.k])) : '';
+    const segVals = {}; for (const [k] of SEG) segVals[k] = has(d.seg[k]) ? fw(Number(d.seg[k])) : '';
+    const zone = h('label', { class: 'photozone' });
+    const fileIn = h('input', { type: 'file', accept: 'image/*', class: 'sr', onchange: async (e) => {
+      const file = e.target.files && e.target.files[0]; if (!file) return;
+      zone.replaceChildren(h('span', { class: 'muted', text: 'Preparing photo…' }));
+      try { const img = await loadImage(file); d.photo = { thumb: squareThumb(img, 240), image: shrinkImage(img, 1600, 0.85) }; d.removed = false; } catch (err) { toast(err.message); }
+      drawZone();
+    } });
+    function drawZone() {
+      const src = d.photo ? d.photo.image : (existing && existing.hasPhoto && !d.removed ? (S.images[existing.id] || S.thumbs[existing.id]) : null);
+      zone.replaceChildren(fileIn, ...(src
+        ? [h('img', { src, alt: 'InBody printout photo' }), h('span', { class: 'zonebtns' }, h('span', { class: 'pill', text: 'Change photo' }),
+            h('button', { type: 'button', class: 'small danger', onclick: (e) => { e.preventDefault(); d.photo = null; d.removed = true; drawZone(); } }, 'Remove'))]
+        : [icon('camera'), h('b', { text: 'Add the printout photo' }), h('span', { style: 'font-size:.8rem', text: 'From your camera or photo library' })]));
+    }
+    drawZone();
+    if (existing && existing.hasPhoto && !S.images[existing.id]) getImage(existing.id).then(() => { if (!d.photo && !d.removed) drawZone(); }).catch(() => {});
+    const numIn = (obj, k, label) => field(label, h('input', { inputmode: 'decimal', value: obj[k], placeholder: '—', autocomplete: 'off', oninput: (e) => { obj[k] = e.target.value; } }));
+    const segBox = h('details', { class: 'segbox', open: Object.values(segVals).some(Boolean) },
+      h('summary', null, 'Segmental lean mass (optional)'),
+      h('div', { class: 'mgrid', style: 'grid-template-columns:repeat(3,minmax(0,1fr));margin-top:10px' }, SEG.map(([k, l]) => numIn(segVals, k, `${l} (${unit()})`))));
+    const save = h('button', { type: 'button', class: 'primary small', text: 'Save', onclick: async () => {
+      const n = (v) => { const x = parseFloat(String(v).replace(',', '.')); return isFinite(x) ? x : ''; };
+      const out = existing ? { ...existing } : { id: uid('b'), at: Date.now(), by: S.myName };
+      out.date = d.date || todayISO(); out.notes = d.notes.trim();
+      for (const f of SCAN_FIELDS) { const v = n(vals[f.k]); out[f.k] = v === '' ? '' : f.mass ? store(v) : v; }
+      out.seg = {}; for (const [k] of SEG) { const v = n(segVals[k]); if (v !== '') out.seg[k] = store(v); }
+      out.hasPhoto = !!(d.photo || (existing && existing.hasPhoto && !d.removed));
+      if (!out.hasPhoto && !SCAN_FIELDS.some(f => has(out[f.k]))) { toast('Add the photo or at least one number'); return; }
+      sh.close();
+      await action(existing ? 'Scan updated' : 'Scan saved', () => put('body_scans', out));
+      try { if (d.photo) await savePhoto(out.id, d.photo.thumb, d.photo.image); else if (existing && existing.hasPhoto && d.removed) await deletePhoto(out.id); } catch (e) { showErr(e); }
+      render(true);
+    } });
+    const sh = sheet(existing ? 'Edit InBody scan' : 'New InBody scan', h('div', { class: 'fgrid' },
+      zone,
+      field('Scan date', h('input', { type: 'date', value: d.date, max: todayISO(), onchange: (e) => { d.date = e.target.value; } })),
+      h('p', { class: 'muted', style: 'margin:0;font-size:.8rem', text: `Copy the numbers from the printout. Weights in ${unit()}. Leave any blank.` }),
+      h('div', { class: 'mgrid', style: 'grid-template-columns:repeat(2,minmax(0,1fr))' },
+        SCAN_FIELDS.map(f => numIn(vals, f.k, f.label + (f.mass ? ` (${unit()})` : f.unit ? ` (${f.unit})` : '')))),
+      segBox,
+      field('Notes', h('textarea', { value: d.notes, placeholder: 'Optional, e.g. scanned after breakfast', style: 'min-height:60px', oninput: (e) => { d.notes = e.target.value; } })),
+      h('button', { type: 'button', class: 'primary big', onclick: () => save.click() }, existing ? 'Save Changes' : 'Save Scan')),
+      { tall: true, right: save });
   }
 
   // ---------- reminders (web push, sent by the courtfit-remind server function) ----------
@@ -1517,7 +1789,7 @@
   function startRoutine(r) {
     startWorkout(r.name, (r.items || []).filter(i => findEx(i.exerciseId)).map(it => {
       const prev = previousSets(it.exerciseId);
-      return { exerciseId: it.exerciseId, notes: '', sets: (it.sets || [{}]).map((s, i) => newSet(s.weight || prev[i]?.weight || null, null, 'normal', s.reps || '')) };
+      return { exerciseId: it.exerciseId, group: it.group || null, notes: '', sets: (it.sets || [{}]).map((s, i) => newSet(s.weight || prev[i]?.weight || null, null, 'normal', s.reps || '')) };
     }), r.id);
   }
   function addExercises(ids) {
@@ -1555,7 +1827,7 @@
         h('input', { class: 'nameinput', 'aria-label': 'Workout name', value: w.name, autocomplete: 'off', oninput: (e) => { w.name = e.target.value; saveActive(); } }),
         when,
         h('div', { style: 'margin:12px 0' }, liveTally()), notes),
-      w.exercises.map((e, i) => exerciseCard(e, i)),
+      renderRuns(w.exercises, (e, i) => exerciseCard(e, i)),
       w.exercises.length ? null : h('div', { class: 'empty', style: 'margin-top:12px' }, h('h2', { text: 'Get started' }), h('p', { text: 'Add an exercise to start logging sets.' })),
       h('div', { class: 'stack', style: 'margin-top:16px' },
         h('button', { type: 'button', class: 'primary big', onclick: () => picker(addExercises) }, icon('plus'), 'Add Exercise'),
@@ -1581,7 +1853,8 @@
           actions(exLabel(ex), [
             { label: 'Move Up', icon: 'up', run: move(-1) }, { label: 'Move Down', icon: 'down', run: move(1) },
             { label: 'Replace Exercise', icon: 'repeat', run: () => picker((ids) => { e.exerciseId = ids[0]; saveActive(); render(true); }, true) },
-            { label: 'Remove Exercise', icon: 'trash', danger: true, run: () => { w.exercises.splice(idx, 1); saveActive(); render(true); } }]);
+            ...(idx < w.exercises.length - 1 ? [{ label: linkedToNext(w.exercises, idx) ? 'Unlink superset with next' : 'Superset with next exercise', icon: 'repeat', run: () => { toggleLink(w.exercises, idx); saveActive(); render(true); } }] : []),
+            { label: 'Remove Exercise', icon: 'trash', danger: true, run: () => { w.exercises.splice(idx, 1); normalizeGroups(w.exercises); saveActive(); render(true); } }]);
         } }, icon('dots'))),
       h('textarea', { class: 'noteinput', rows: '1', placeholder: 'Notes', 'aria-label': 'Exercise notes', style: 'margin:6px 0 4px', value: e.notes || '', oninput: (ev) => { e.notes = ev.target.value; grow(ev.target); saveActive(); } }),
       cue ? h('div', { class: 'cue' + (cue.up ? ' up' : '') }, icon(cue.up ? 'up' : 'repeat', 'ic sm'), h('span', { text: cue.text })) : null,
@@ -1607,7 +1880,7 @@
     const better = !!(s.done && p && ((s.weight || 0) > (p.weight || 0) || ((s.weight || 0) === (p.weight || 0) && (s.reps || 0) > (p.reps || 0))));
     const isPR = !!(s.done && histBest > 0 && e1rm(s) > histBest + 0.01);
     const label = setLabel(e.sets, si);
-    const prevText = p ? `${fw(p.weight)} × ${p.reps || 0}` : '—';
+    const prevText = p ? `${fw(p.weight)}×${p.reps || 0}` : '—';
     const wIn = h('input', { inputmode: 'decimal', enterkeyhint: 'next', autocomplete: 'off', 'aria-label': `Set ${label} weight in ${unit()}`, placeholder: p ? fw(p.weight) : '0', value: s.weight != null ? fw(s.weight) : '',
       onfocus: (ev) => ev.target.select(),
       oninput: (ev) => { const v = parseFloat(ev.target.value.replace(',', '.')); s.weight = isFinite(v) ? store(v) : null; saveActive(); refreshTally(); } });
@@ -1626,7 +1899,7 @@
         if (s.weight == null && p) s.weight = p.weight;
         if (s.reps == null) s.reps = firstNum(s.target) ?? (p ? p.reps : null);
         s.done = true;
-        if (isLive(S.active) && restSecs() > 0) { S.active.restEnd = Date.now() + restSecs() * 1000; S.active.restDur = restSecs() * 1000; }
+        if (isLive(S.active) && restSecs() > 0 && endsRound(S.active.exercises, e)) { S.active.restEnd = Date.now() + restSecs() * 1000; S.active.restDur = restSecs() * 1000; }
         unlockAudio();
         if (navigator.vibrate) navigator.vibrate(15);
         saveActive(); render(true);
@@ -1662,7 +1935,7 @@
     if (!(await confirmBox(live ? 'Finish workout?' : 'Save workout?', "Sets you haven't checked off will be removed.", live ? 'Finish Workout' : 'Save Workout'))) return;
     const end = live ? Date.now() : w.start + Math.max(1, w.durMin || 60) * 60000;
     const done = { id: w.id, name: (w.name || '').trim() || defaultName(), start: w.start, end, notes: w.notes || '', routineId: w.routineId || null, by: w.by || S.myName,
-      exercises: w.exercises.map(e => ({ exerciseId: e.exerciseId, notes: e.notes || '', sets: doneSets(e).map(s => ({ weight: s.weight, reps: s.reps, kind: s.kind || 'normal', done: true })) })).filter(e => e.sets.length) };
+      exercises: w.exercises.map(e => ({ exerciseId: e.exerciseId, group: e.group || null, notes: e.notes || '', sets: doneSets(e).map(s => ({ weight: s.weight, reps: s.reps, kind: s.kind || 'normal', done: true })) })).filter(e => e.sets.length) };
     const prs = done.exercises.map(e => {
       const best = Math.max(0, ...e.sets.map(s => s.weight || 0));
       const prior = Math.max(0, ...historyFor(e.exerciseId).filter(x => x.w.id !== done.id && x.w.start < done.start).flatMap(x => doneSets(x.entry).map(s => s.weight || 0)));
@@ -1754,16 +2027,19 @@
   let gid = 0;
   function niceMax(v) { if (v <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))), n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; }
   const kfmt = (v) => v >= 1000 ? num1(v / 1000) + 'k' : num1(v);
-  function lineChart(points, suffix) {
+  // zoom: scale the y-axis to the data range (for body numbers that change by small amounts).
+  function lineChart(points, suffix, zoom) {
     const W = 340, H = 190, L = 44, R = 10, T = 12, B = 24, id = 'g' + (++gid);
     const xs = points.map(p => p.x), ys = points.map(p => p.y);
-    const x0 = Math.min(...xs), x1 = Math.max(...xs), hi = niceMax(Math.max(...ys) * 1.1), lo = 0;
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const yMin = Math.min(...ys), yMax = Math.max(...ys), pad = Math.max((yMax - yMin) * 0.35, Math.abs(yMax) * 0.01, 0.5);
+    const hi = zoom ? yMax + pad : niceMax(yMax * 1.1), lo = zoom ? Math.max(0, yMin - pad) : 0;
     const sx = (x) => L + (x1 === x0 ? (W - L - R) / 2 : (x - x0) / (x1 - x0) * (W - L - R));
     const sy = (y) => T + (1 - (y - lo) / (hi - lo || 1)) * (H - T - B);
     const pts = points.map(p => [sx(p.x), sy(p.y)]);
     const d = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
     const area = `${d} L${pts[pts.length - 1][0]},${H - B} L${pts[0][0]},${H - B} Z`;
-    const ticks = [hi / 3, hi * 2 / 3, hi];
+    const ticks = zoom ? [lo, (lo + hi) / 2, hi] : [hi / 3, hi * 2 / 3, hi];
     return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Progress chart, latest ${num1(ys[ys.length - 1])}">
       <defs><linearGradient id="${id}l" x1="0" x2="1"><stop offset="0" stop-color="#f490bb"/><stop offset="1" stop-color="#c9a3f0"/></linearGradient>
       <linearGradient id="${id}a" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f490bb" stop-opacity=".3"/><stop offset="1" stop-color="#f490bb" stop-opacity="0"/></linearGradient></defs>
@@ -1796,6 +2072,19 @@
     for (let i = 0; i < 7; i++) { g.fillStyle = `hsl(${hue + i * 18} 65% ${48 + (i % 3) * 8}%)`; g.beginPath(); g.ellipse(230 + (i % 3) * 90, 250 + Math.floor(i / 3) * 80, 62, 44, i, 0, 7); g.fill(); }
     g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(0, 560, 640, 80); g.fillStyle = '#fff'; g.font = 'bold 34px sans-serif'; g.textAlign = 'center'; g.fillText(label, 320, 612);
     const t = document.createElement('canvas'); t.width = t.height = 240; t.getContext('2d').drawImage(c, 0, 0, 240, 240);
+    return { thumb: t.toDataURL('image/jpeg', 0.75), image: c.toDataURL('image/jpeg', 0.8) };
+  }
+  function sampleScanPhoto(date, weight, smm, pbf) {
+    const c = document.createElement('canvas'); c.width = 720; c.height = 960; const g = c.getContext('2d');
+    g.fillStyle = '#d9d2cc'; g.fillRect(0, 0, 720, 960);
+    g.save(); g.translate(360, 480); g.rotate(-0.03); g.fillStyle = '#fbfbf9'; g.fillRect(-300, -420, 600, 840);
+    g.fillStyle = '#b4123a'; g.font = 'bold 44px sans-serif'; g.fillText('InBody', -260, -350);
+    g.fillStyle = '#333'; g.font = '20px sans-serif'; g.fillText('Body Composition Analysis · ' + date, -260, -310);
+    const rows = [['Weight', weight + ' lb'], ['Skeletal Muscle Mass', smm + ' lb'], ['Percent Body Fat', pbf + ' %']];
+    rows.forEach(([k, v], i) => { const y = -240 + i * 70; g.fillStyle = '#eee'; g.fillRect(-260, y - 34, 520, 50); g.fillStyle = '#222'; g.font = '24px sans-serif'; g.fillText(k, -245, y); g.font = 'bold 26px sans-serif'; g.fillText(v, 120, y); });
+    for (let i = 0; i < 9; i++) { g.fillStyle = '#ddd'; g.fillRect(-260, 20 + i * 38, 220 + (i * 37) % 280, 14); }
+    g.restore();
+    const t = document.createElement('canvas'); t.width = t.height = 240; t.getContext('2d').drawImage(c, 0, 120, 720, 720, 0, 0, 240, 240);
     return { thumb: t.toDataURL('image/jpeg', 0.75), image: c.toDataURL('image/jpeg', 0.8) };
   }
   function loadSample() {
@@ -1842,6 +2131,17 @@
         if (photo) { const ph = samplePhoto(hue, name); S.thumbs[id] = ph.thumb; S.images[id] = ph.image; }
       });
     }
+    // Superset in the sample routine and recent workouts (RDL + hip abduction).
+    S.routines[0].items[1].group = 'gsample'; S.routines[0].items[2].group = 'gsample';
+    S.workouts.slice(-2).forEach(w => { w.exercises[1].group = 'gsample'; w.exercises[2].group = 'gsample'; });
+    // Three InBody scans, about a month apart, with a mock printout photo.
+    const scanRows = [[58, 160.2, 62.1, 47.0, 29.3, 26.6, 9, 1392, 72], [29, 159.1, 62.8, 45.2, 28.4, 26.4, 8, 1405, 74], [3, 158.9, 63.5, 43.9, 27.6, 26.4, 8, 1418, 76]];
+    S.body_scans = scanRows.map(([ago, weight, smm, bfm, pbf, bmi, vfl, bmr, score], i) => {
+      const id = 'bsample' + i, date = shiftDay(todayISO(), -ago);
+      const ph = sampleScanPhoto(date, weight, smm, pbf); S.thumbs[id] = ph.thumb; S.images[id] = ph.image;
+      return { id, date, at: i, weight, smm, bfm, pbf, bmi, vfl, bmr, score, hasPhoto: true, notes: '',
+        seg: i === 2 ? { la: 6.2, ra: 6.3, tr: 50.4, ll: 17.6, rl: 17.7 } : i === 1 ? { la: 6.1, ra: 6.2, tr: 49.9, ll: 17.4, rl: 17.4 } : {} };
+    });
     S.saved_meals = [{ id: 'ssample', name: 'My usual breakfast', meal: 'Breakfast', created: 1, items: [
       { name: 'Greek yogurt', cal: '', p: 17, c: 7, f: 0 }, { name: 'Blueberries', cal: '', p: 1, c: 21, f: 0 }, { name: 'Granola', cal: '', p: 3, c: 20, f: 6 }] }];
   }
@@ -1869,6 +2169,20 @@
     } else if (shot === 'day') {
       S.view = { name: 'profile' };
       later(() => { const iso = isoOf(new Date(S.workouts[S.workouts.length - 1].start)); daySheet(iso, activityMap()[iso]); });
+    } else if (shot === 'scans' || shot === 'badges') {
+      S.view = { name: 'profile' }; S.scanMetric = 'pbf';
+      later(() => { const p = [...document.querySelectorAll('.panel')].find(x => x.innerText.startsWith(shot === 'scans' ? 'InBody' : 'Achievements')); if (p) window.scrollTo(0, p.getBoundingClientRect().top + window.scrollY - 70); });
+    } else if (shot === 'scan') {
+      S.view = { name: 'profile' }; later(() => scanDetail(S.body_scans[S.body_scans.length - 1].id));
+    } else if (shot === 'addscan') {
+      S.view = { name: 'profile' }; later(() => scanSheet(null));
+    } else if (shot === 'superset') {
+      S.active = null; saveActive(); startRoutine(S.routines[0]); S.view = { name: 'active' };
+      later(() => { const el = document.querySelector('.ssgroup'); if (el) window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 80); });
+    } else if (shot === 'celebrate') {
+      S.view = { name: 'profile' };
+      const on = achievements().filter(a => a.on).map(a => a.id);
+      ls.set('cf-badges-seen', JSON.stringify(on.filter(id => id !== 'b3' && id !== 'bf')));
     } else if (shot === 'reminders') {
       ls.set('cf-remind', JSON.stringify({ ...REMIND_DEFAULT, enabled: true }));
       S.view = { name: 'settings' };
@@ -1935,14 +2249,15 @@
     if (DEMO && SAMPLE) {
       if (!S.myName) { S.myName = 'Court'; ls.set('cf-name', S.myName); }
       ls.set('cf-first-log-shown', '1');
-      loadSample(); S.loaded = true;
+      if (QS.get('shot') !== 'celebrate') ls.del('cf-badges-seen');
+      loadSample(); S.loaded = true; S.synced = true;
       previewShot(QS.get('shot'));
       render(true); return;
     }
     if (DEMO) {
       if (!loadCache()) { S.exercises = (window.COURTFIT_LIBRARY || []).map(([name, equipment, muscle]) => ({ id: window.courtfitExerciseId(name, equipment), name, equipment, muscle })); saveCache(); }
       if (!S.programs.length) { S.programs = [clone(STRONGHER_R4)]; saveCache(); }
-      S.needName = !S.myName; S.loaded = true; render(true); return;
+      S.needName = !S.myName; S.loaded = true; S.synced = true; render(true); return;
     }
     if (!CFG.supabaseUrl || !CFG.supabaseAnonKey) { S.setupMissing = true; render(true); return; }
     if (!KEY) { S.badLink = true; render(true); return; }

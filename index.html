@@ -285,6 +285,46 @@ table.pg { border-collapse: separate; border-spacing: 0; font-size: .78rem; min-
 .mealrem input[type=time] { width: 138px; flex: none; padding: 10px 8px; }
 .mealrem input[type=time]:disabled { opacity: .4; }
 
+/* InBody scans */
+.scanlast { display: flex; gap: 12px; align-items: center; justify-content: flex-start; width: 100%; text-align: left; margin-top: 12px; padding: 10px; border-radius: 16px; background: var(--raised); border-color: transparent; font-weight: 400; }
+.scanlast .grow { flex: 1; min-width: 0; }
+.scanlast .t { display: block; font-weight: 700; }
+.scanlast .s { display: block; font-size: .8rem; color: var(--muted); }
+.scangrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.scanstat { display: grid; gap: 1px; padding: 10px 12px; border-radius: 14px; background: var(--raised); }
+.scanstat span { font-size: .75rem; color: var(--muted); }
+.scanstat b { font: 800 1.15rem/1.2 var(--f-display); }
+.scanstat small, .delta { font-size: .76rem; font-weight: 700; color: var(--muted); }
+.scanstat small.good, .delta.good { color: var(--good); }
+.scanstat small.bad, .delta.bad { color: var(--bad); }
+.segbox { background: var(--raised); border-radius: 14px; padding: 12px 14px; }
+.segbox summary { font-weight: 600; cursor: pointer; min-height: 28px; }
+.db { background: #57b7a0; }
+
+/* Supersets */
+.ssgroup { position: relative; border-left: 4px solid; border-image: var(--grad) 1; padding-left: 6px; margin: 12px 0; }
+.ssgroup > .panel { padding: 14px 12px; }
+.ssgroup > .sslabel { display: inline-flex; align-items: center; gap: 6px; font: 700 .78rem/1 var(--f-body); letter-spacing: .06em; text-transform: uppercase; color: var(--plum); margin: 0 0 8px 2px; }
+.ssgroup > .panel + .panel { margin-top: 8px; }
+.sstag { display: inline-block; font-size: .66rem; font-weight: 800; letter-spacing: .05em; color: var(--plum); background: rgba(154, 107, 209, .12); border-radius: 999px; padding: 2px 8px; margin-left: 6px; vertical-align: 2px; }
+.linkbtn { display: flex; justify-content: center; margin: -4px 0; }
+.linkbtn button { min-height: 32px; padding: 4px 12px; font-size: .78rem; border-radius: 999px; background: var(--surface); color: var(--plum); }
+.linkbtn button[aria-pressed="true"] { background: rgba(154, 107, 209, .14); border-color: transparent; }
+
+/* Achievements */
+.badges { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.badge { display: grid; justify-items: center; gap: 4px; padding: 12px 6px; border-radius: 16px; background: var(--raised); text-align: center; border: 1px solid transparent; min-height: 0; }
+.badge .em { font-size: 1.7rem; line-height: 1; }
+.badge b { font-size: .74rem; line-height: 1.2; }
+.badge small { font-size: .66rem; color: var(--muted); }
+.badge.on { background: linear-gradient(160deg, #fff 0%, #fde7f1 100%); border-color: rgba(240, 130, 180, .35); box-shadow: 0 4px 14px rgba(200, 80, 138, .12); }
+.badge:not(.on) .em { filter: grayscale(1); opacity: .35; }
+.badge .bar { width: 80%; height: 4px; border-radius: 2px; background: var(--chip); overflow: hidden; }
+.badge .bar i { display: block; height: 100%; background: var(--grad); }
+.confetti { position: fixed; inset: 0; pointer-events: none; z-index: 96; overflow: hidden; }
+.confetti i { position: absolute; top: -12px; width: 9px; height: 14px; border-radius: 2px; animation: fall linear forwards; }
+@keyframes fall { to { transform: translateY(110vh) rotate(720deg); opacity: .9; } }
+
 /* Combined calendar */
 .cal .dy { display: grid; justify-items: center; align-content: center; gap: 2px; width: 40px; height: 44px; min-height: 0; margin: 0 auto; padding: 0; border: 0; border-radius: 12px; background: transparent; color: var(--ink); font-size: .88rem; font-weight: 500; }
 .cal .dy.on { background: rgba(240, 130, 180, .16); font-weight: 800; }
@@ -342,7 +382,7 @@ i.mp { background: #f7a3c7; } i.mc { background: #d3b8f5; } i.mf { background: #
 .photozone img { width: 100%; max-height: 320px; object-fit: cover; display: block; }
 .photozone .zonebtns { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; justify-content: space-between; gap: 8px; }
 .photozone .zonebtns .small { background: rgba(255, 255, 255, .9); }
-.mgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.mgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; align-items: end; }
 .mgrid input { padding: 11px 6px; text-align: center; }
 .fullphoto { width: 100%; border-radius: 14px; display: block; min-height: 140px; max-height: 60vh; object-fit: contain; background: var(--chip); }
 .recent { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
@@ -370,7 +410,7 @@ i.mp { background: #f7a3c7; } i.mc { background: #d3b8f5; } i.mf { background: #
 .setrow .sn { min-height: 38px; padding: 0; border: 0; border-radius: 9px; background: var(--chip); font: 700 .95rem/1 var(--f-body); color: var(--ink); }
 .setrow .sn.warmup { color: var(--warn); } .setrow .sn.drop { color: var(--plum); } .setrow .sn.failure { color: var(--bad); }
 .setrow.done .sn { background: transparent; }
-.setrow .prev { text-align: center; color: var(--muted); font-size: .84rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.setrow .prev { text-align: center; color: var(--muted); font-size: .78rem; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .setrow input { height: 38px; padding: 0 4px; text-align: center; font-weight: 700; border-radius: 9px; background: #fff8fb; }
 .setrow input::placeholder { color: rgba(185, 161, 174, .55); font-weight: 600; }
 .setrow.done input { background: transparent; border-color: transparent; }
@@ -492,9 +532,9 @@ i.mp { background: #f7a3c7; } i.mc { background: #d3b8f5; } i.mf { background: #
 <div id="installslot"></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="config.js?v=8"></script>
-<script src="library.js?v=8"></script>
+<script src="config.js?v=9"></script>
+<script src="library.js?v=9"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
-<script src="app.js?v=8"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>
