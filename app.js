@@ -15,6 +15,7 @@
   // Local preview without a database (only on this computer).
   const DEMO = QS.get('demo') === '1' && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
   const LB_KG = 0.45359237, DAY = 86400000;
+  const APP_VERSION = ((document.querySelector('script[src^="app.js"]')?.getAttribute('src') || '').match(/v=(\d+)/) || [])[1] || '0';
 
   const MUSCLES = ['Glutes', 'Hamstrings', 'Quads', 'Calves', 'Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Core', 'Full Body', 'Cardio'];
   const EQUIPMENT = ['Barbell', 'Dumbbell', 'Machine', 'Cable', 'Bodyweight', 'Kettlebell', 'Band', 'Smith Machine', 'Other'];
@@ -754,7 +755,7 @@
           const a = h('a', { href: URL.createObjectURL(blob), download: `courtfit-backup-${new Date().toISOString().slice(0, 10)}.json` });
           document.body.append(a); a.click(); a.remove();
         } }, 'Download backup')),
-      h('p', { class: 'muted', style: 'text-align:center;font-size:.8rem;margin-top:18px', text: 'CourtFit · Lift, log, glow' }));
+      h('p', { class: 'muted', style: 'text-align:center;font-size:.8rem;margin-top:18px', text: `CourtFit version ${APP_VERSION} · Lift, log, glow` }));
   }
 
   // ---------- StrongHER program tracker (mirrors the paper sheets) ----------
@@ -822,10 +823,10 @@
   // Edits change the current program object right away; saving waits for a pause in typing.
   let progTimer = null;
   function saveProg() { clearTimeout(progTimer); progTimer = setTimeout(flushProg, 700); }
-  function flushProg() {
+  async function flushProg() {
     if (!progTimer) return;
     clearTimeout(progTimer); progTimer = null;
-    const p = curProg(); if (p) put('programs', p).catch(showErr);
+    const p = curProg(); if (p) await put('programs', p).catch(showErr);
   }
   const editProg = (fn) => { const p = curProg(); if (!p) return; fn(p); saveProg(); };
   const shTitle = () => h('h1', { class: 'shlogo' }, h('span', { class: 'sh-strong', text: 'Strong' }), ' HER');
@@ -1237,7 +1238,34 @@
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.sb && !S.needName) flush().then(() => loadAll()); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushProg(); });
   window.addEventListener('pagehide', flushProg);
-  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(err => console.error('Service worker', err));
+  // Updates. The running version is the ?v= on app.js. iPhone home-screen apps often resume
+  // instead of reloading, so when the app comes back on screen we ask for the newest
+  // index.html and reload if it names a newer app.js. Nothing is lost: the workout in
+  // progress is saved on every change, and pending StrongHER edits are sent first.
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(err => console.error('Service worker', err));
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) checkForUpdate(); });
+  }
+  let checkingUpdate = false;
+  async function checkForUpdate() {
+    if (checkingUpdate || location.protocol !== 'https:') return;
+    const a = document.activeElement;
+    if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return; // never interrupt typing; try again next time
+    checkingUpdate = true;
+    try {
+      navigator.serviceWorker?.getRegistration().then(r => r && r.update()).catch(() => {});
+      const html = await (await fetch('index.html?check=' + Date.now(), { cache: 'no-store' })).text();
+      const v = (html.match(/app\.js\?v=(\d+)/) || [])[1];
+      if (v && Number(v) > Number(APP_VERSION)) {
+        await flushProg();
+        location.reload();
+      }
+    } catch { } finally { checkingUpdate = false; }
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(); });
+  window.addEventListener('pageshow', (e) => { if (e.persisted) checkForUpdate(); });
+  setTimeout(checkForUpdate, 4000);
 
   // Hidden user log: records who opened the app and on what (read only in Supabase).
   function logVisit() {

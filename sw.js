@@ -1,7 +1,7 @@
 /* CourtFit service worker: keeps the app usable with no signal.
    Data requests to Supabase are never cached here; the app keeps its own
    saved copy of the data. */
-const CACHE = 'courtfit-shell-v4';
+const CACHE = 'courtfit-shell-v5';
 const SHELL = [
   './',
   './index.html',
@@ -37,7 +37,9 @@ self.addEventListener('fetch', (event) => {
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     try {
-      const res = await fetch(req);
+      // Our own files: always ask GitHub Pages if there is a newer copy (it allows
+      // 10-minute browser caching, which otherwise delays updates on the phone).
+      const res = sameOrigin ? await fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }) : await fetch(req);
       if (res && (res.ok || res.type === 'opaque')) cache.put(req, res.clone()).catch(() => {});
       return res;
     } catch (err) {
