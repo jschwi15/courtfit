@@ -432,7 +432,13 @@ i.mp { background: #f7a3c7; } i.mc { background: #d3b8f5; } i.mf { background: #
 body.kp-open #app { padding-bottom: 300px; }
 @keyframes kpup { from { transform: translateY(100%); } to { transform: none; } }
 .setrow .ck { min-height: 38px; padding: 0; border: 0; border-radius: 9px; background: var(--chip); color: var(--muted); }
-.setrow .ck .ic { width: 20px; height: 20px; }
+.setrow .ck .ic { width: 20px; height: 20px; position: relative; z-index: 1; }
+/* Auto-confirm countdown: the check fills with pink from the bottom, then ticks. */
+.setrow .ck { position: relative; overflow: hidden; }
+.setrow .ck.auto { color: var(--pink); }
+.setrow .ck.auto::before { content: ''; position: absolute; inset: 0; background: var(--grad); transform-origin: bottom; transform: scaleY(0);
+  animation: autofill var(--auto-dur, 10s) linear var(--auto-delay, 0ms) forwards; }
+@keyframes autofill { to { transform: scaleY(1); } }
 .setrow.done .ck { background: var(--grad); color: var(--on-accent); animation: pop .3s ease; }
 @keyframes pop { 0% { transform: scale(.8); } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }
 .restbar { position: fixed; z-index: 22; left: max(10px, env(safe-area-inset-left, 0px)); right: max(10px, env(safe-area-inset-right, 0px)); max-width: 560px; margin: 0 auto;
@@ -552,9 +558,9 @@ body.kp-open #app { padding-bottom: 300px; }
 <div id="installslot"></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="config.js?v=11"></script>
-<script src="library.js?v=11"></script>
+<script src="config.js?v=12"></script>
+<script src="library.js?v=12"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
-<script src="app.js?v=11"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>

@@ -77,6 +77,7 @@
   const fwu = (lbs) => `${fw(lbs)} ${unit()}`;
   const fvol = (lbs) => `${Math.round(disp(lbs)).toLocaleString()} ${unit()}`;
   const restSecs = () => Number(ls.get('cf-rest') || 90);
+  const autoSecs = () => { const v = ls.get('cf-auto'); return v == null || v === '' ? 10 : Number(v); }; // 0 = off
 
   let toastTimer;
   function toast(msg, action) {
@@ -126,6 +127,7 @@
   const historyFor = (exerciseId) => finished().flatMap(w => (w.exercises || []).filter(e => e.exerciseId === exerciseId && doneSets(e).length).map(entry => ({ entry, w })));
   const setLabel = (sets, i) => { const k = sets[i].kind; if (k === 'warmup') return 'W'; if (k === 'drop') return 'D'; if (k === 'failure') return 'F'; return String(sets.slice(0, i + 1).filter(s => !s.kind || s.kind === 'normal').length); };
   const KP = { pad: null, inp: null, key: null, buf: '', fresh: false }; // number pad state
+  const AUTO = new Map(); // set object -> pending auto-confirm countdown
   const firstNum = (t) => { const m = String(t || '').match(/\d+/); return m ? Number(m[0]) : null; };
   const sortedRoutines = () => [...S.routines].sort((a, b) => (a.order ?? a.created ?? 0) - (b.order ?? b.created ?? 0));
 
@@ -1141,13 +1143,17 @@
     const seg = (key, val, label, cur) => h('button', { type: 'button', 'aria-pressed': String(cur === val), onclick: () => { ls.set(key, val); render(true); } }, label);
     const rest = h('select', { 'aria-label': 'Default rest timer', onchange: (e) => { ls.set('cf-rest', e.target.value); toast('Rest timer saved'); } },
       [0, ...Array.from({ length: 19 }, (_, i) => 30 + i * 15)].map(s => h('option', { value: String(s), text: s ? fmtClock(s * 1000) : 'Off', selected: restSecs() === s })));
+    const auto = h('select', { 'aria-label': 'Auto-confirm sets', onchange: (e) => { ls.set('cf-auto', e.target.value); toast('Auto-confirm saved'); } },
+      [0, 10, 15, 20, 30].map(s => h('option', { value: String(s), text: s ? `After ${s} seconds` : 'Off', selected: autoSecs() === s })));
     return h('div', null,
       topbar(backLink('#profile', 'Profile')),
       h('h1', { style: 'font-size:1.6rem;margin-bottom:14px', text: 'Settings' }),
       h('div', { class: 'panel fgrid' },
         field('Your name', nameIn),
         h('div', { class: 'f' }, h('span', { class: 'eyebrow', text: 'Weight unit' }), h('div', { class: 'seg' }, seg('cf-unit', 'lbs', 'Pounds (lbs)', unit()), seg('cf-unit', 'kg', 'Kilograms (kg)', unit()))),
-        field('Default rest timer', rest)),
+        field('Default rest timer', rest),
+        field('Auto-confirm sets', auto),
+        h('p', { class: 'muted', style: 'margin:-4px 0 0;font-size:.82rem', text: 'Once you enter weight and reps, the set checks itself off after this long. Tap the check to do it sooner.' })),
       remindersPanel(),
       h('div', { class: 'panel' }, h('div', { class: 'hd' }, h('h2', { text: 'Your app link' })),
         h('p', { class: 'muted', style: 'margin:10px 0', text: 'Anyone with this link can open your workouts, so keep it private. Use it to open CourtFit on a new phone.' }),
@@ -1837,7 +1843,7 @@
           h('button', { type: 'button', class: 'danger', style: 'justify-content:center', onclick: async () => {
             const editing = w.mode === 'edit';
             if (await confirmBox(editing ? 'Stop editing?' : 'Discard this workout?', editing ? 'Your changes will not be saved. The saved workout stays as it was.' : 'Everything logged here will be deleted.', editing ? 'Discard Changes' : 'Discard Workout', true)) {
-              S.active = null; saveActive(); go(editing ? '#w-' + w.id : '#workout');
+              autoClear(); S.active = null; saveActive(); go(editing ? '#w-' + w.id : '#workout');
             }
           } }, w.mode === 'edit' ? 'Discard Changes' : 'Discard'))));
   }
@@ -1896,6 +1902,32 @@
     rIn._kp = { decimal: false, step: 1, hint: () => hintR || 0,
       set: (t) => { const v = parseInt(t, 10); s.reps = isFinite(v) ? v : null; saveActive(); refreshTally(); } };
     for (const el of [wIn, rIn]) { el.addEventListener('pointerdown', (ev) => ev.preventDefault()); el.addEventListener('click', () => kpOpen(el)); }
+    // Tick the set. `at` is when she actually finished it (an auto-confirm fires a few seconds later).
+    const complete = () => {
+      if (s.done || !S.active || !S.active.exercises.includes(e) || !e.sets.includes(s)) return;
+      if (s.weight == null) s.weight = hintW;
+      if (s.reps == null) s.reps = hintR;
+      s.done = true;
+      if (isLive(S.active) && restSecs() > 0 && endsRound(S.active.exercises, e)) { S.active.restEnd = Date.now() + restSecs() * 1000; S.active.restDur = restSecs() * 1000; }
+      if (navigator.vibrate) navigator.vibrate(15);
+      saveActive(); render(true);
+    };
+    const pend = AUTO.get(s);
+    const ck = h('button', { type: 'button', class: 'ck' + (pend ? ' auto' : ''), 'aria-pressed': String(!!s.done), 'aria-label': s.done ? 'Completed. Tap to undo' : 'Mark set complete',
+      style: pend ? `--auto-dur:${pend.dur}ms;--auto-delay:${pend.start - Date.now()}ms` : null, onclick: () => {
+        autoCancel(s);
+        if (s.done) { s.done = false; saveActive(); render(true); return; }
+        unlockAudio(); complete();
+      } }, icon('check'));
+    // Once she has typed both weight and reps, the set ticks itself after a few seconds.
+    // Each new keypress restarts the countdown; clearing a box stops it.
+    for (const el of [wIn, rIn]) {
+      const set = el._kp.set;
+      el._kp.set = (t) => {
+        set(t);
+        if (!s.done && s.weight != null && s.reps != null) autoStart(s, complete, ck); else autoCancel(s, ck);
+      };
+    }
     const row = h('div', { class: 'setrow' + (s.done ? ' done' : '') + (isPR ? ' pr' : '') },
       isPR ? h('span', { class: 'prbadge', text: 'PR' }) : null,
       h('button', { type: 'button', class: 'sn ' + (s.kind || 'normal'), 'aria-label': `Set ${label} options`, onclick: () => actions('Set type', [
@@ -1903,16 +1935,7 @@
         { label: 'Delete Set', icon: 'trash', danger: true, run: () => { e.sets.splice(si, 1); saveActive(); render(true); } }]) }, label),
       h('span', { class: 'prev' + (better ? ' up' : ''), text: better ? `▲${fw(p.weight)}×${p.reps || 0}` : prevText, 'aria-label': p ? `Previous ${prevText}${better ? ', you beat it' : ''}` : 'No previous' }),
       wIn, rIn,
-      h('button', { type: 'button', class: 'ck', 'aria-pressed': String(!!s.done), 'aria-label': s.done ? 'Completed. Tap to undo' : 'Mark set complete', onclick: () => {
-        if (s.done) { s.done = false; saveActive(); render(true); return; }
-        if (s.weight == null) s.weight = hintW;
-        if (s.reps == null) s.reps = hintR;
-        s.done = true;
-        if (isLive(S.active) && restSecs() > 0 && endsRound(S.active.exercises, e)) { S.active.restEnd = Date.now() + restSecs() * 1000; S.active.restDur = restSecs() * 1000; }
-        unlockAudio();
-        if (navigator.vibrate) navigator.vibrate(15);
-        saveActive(); render(true);
-      } }, icon('check')));
+      ck);
     // Swipe a set either way, starting anywhere on the row (boxes included), to delete it.
     // A plain tap still opens the number pad or ticks the set.
     const back = h('div', { class: 'swipeback', 'aria-hidden': 'true' }, icon('trash', 'ic sm'), 'Delete');
@@ -1951,6 +1974,27 @@
     row.addEventListener('click', (ev) => { if (swiped) { ev.stopPropagation(); ev.preventDefault(); swiped = false; } }, true);
     return wrap;
   }
+  // ---------- auto-confirm: a set she moved on from ticks itself after a few seconds ----------
+  // AUTO maps a set object to its pending countdown. Not saved; a reload just drops it.
+  // (Re)start the countdown for a set. The check button fills up pink while it runs.
+  function autoStart(s, complete, ck) {
+    const secs = autoSecs();
+    autoCancel(s, ck);
+    if (!secs) return;
+    const at = Date.now(), dur = secs * 1000;
+    const timer = setTimeout(() => { AUTO.delete(s); complete(); }, dur);
+    AUTO.set(s, { timer, start: at, dur, fire: () => { clearTimeout(timer); AUTO.delete(s); complete(); } });
+    if (ck && ck.isConnected) { ck.style.setProperty('--auto-dur', dur + 'ms'); ck.style.setProperty('--auto-delay', '0ms'); void ck.offsetWidth; ck.classList.add('auto'); }
+  }
+  function autoCancel(s, ck) {
+    const p = AUTO.get(s);
+    if (ck) { ck.classList.remove('auto'); ck.removeAttribute('style'); }
+    if (!p) return false;
+    clearTimeout(p.timer); AUTO.delete(s);
+    return true;
+  }
+  function autoFlush() { for (const p of [...AUTO.values()]) p.fire(); }
+  function autoClear() { for (const p of AUTO.values()) clearTimeout(p.timer); AUTO.clear(); }
   // ---------- number pad for set weight/reps (replaces the phone keyboard) ----------
   function kpBuild() {
     const k = (label, fn, cls = '', aria) => h('button', { type: 'button', class: 'kpk ' + cls, 'aria-label': aria || label, onclick: fn }, label);
@@ -1978,8 +2022,10 @@
   }
   function kpOpen(inp) {
     if (!KP.pad) kpBuild();
-    if (KP.inp) KP.inp.classList.remove('kpon');
+    const prev = KP.inp;
+    if (prev) prev.classList.remove('kpon');
     KP.inp = inp; KP.key = inp.dataset.kp; KP.buf = inp.value; KP.fresh = true;
+    // Moving to another set: if the one she left has weight and reps, its countdown keeps going.
     inp.classList.add('kpon');
     KP.pad.querySelector('.dot').disabled = !inp._kp.decimal;
     KP.pad.hidden = false; document.body.classList.add('kp-open');
@@ -1990,7 +2036,8 @@
     });
   }
   function kpClose() {
-    if (KP.inp) KP.inp.classList.remove('kpon');
+    const prev = KP.inp;
+    if (prev) prev.classList.remove('kpon');
     KP.inp = null; KP.key = null;
     if (KP.pad) KP.pad.hidden = true;
     document.body.classList.remove('kp-open');
@@ -2025,11 +2072,13 @@
   // After the workout screen redraws (e.g. a set is checked), keep the pad on the same box.
   function kpReattach() {
     const el = document.querySelector(`[data-kp="${KP.key}"]`);
-    if (el && !el.closest('.setrow.done')) kpOpen(el); else kpClose();
+    const { buf, fresh } = KP; // a redraw mid-typing (e.g. another set auto-confirming) keeps her place
+    if (el && !el.closest('.setrow.done')) { kpOpen(el); KP.buf = buf; KP.fresh = fresh; } else kpClose();
   }
   async function finishWorkout() {
     const w = S.active;
     const live = isLive(w);
+    autoFlush(); // sets still counting down count as done
     if (!setsOf(w).length) { actions('Nothing logged yet', [], 'Tap the ✓ on at least one set first.'); return; }
     if (!live && w.start > Date.now()) { toast('The date and time can’t be in the future'); return; }
     if (!(await confirmBox(live ? 'Finish workout?' : 'Save workout?', "Sets you haven't checked off will be removed.", live ? 'Finish Workout' : 'Save Workout'))) return;
