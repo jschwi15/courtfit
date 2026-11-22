@@ -1,7 +1,7 @@
 /* CourtFit service worker: keeps the app usable with no signal.
    Data requests to Supabase are never cached here; the app keeps its own
    saved copy of the data. */
-const CACHE = 'courtfit-shell-v7';
+const CACHE = 'courtfit-shell-v8';
 const SHELL = [
   './',
   './index.html',
@@ -48,5 +48,28 @@ self.addEventListener('fetch', (event) => {
       if (req.mode === 'navigate') { const page = await cache.match('./index.html'); if (page) return page; }
       throw err;
     }
+  })());
+});
+
+// Reminders sent by the courtfit-remind server function.
+self.addEventListener('push', (event) => {
+  let d = {};
+  try { d = event.data ? event.data.json() : {}; } catch { d = { body: event.data && event.data.text() }; }
+  event.waitUntil(self.registration.showNotification(d.title || 'CourtFit', {
+    body: d.body || '',
+    icon: 'logo-192.png',
+    badge: 'logo-64.png',
+    tag: d.tag || 'courtfit',
+    data: { url: d.url || './' }
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || './';
+  event.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const w of wins) { if ('focus' in w) { await w.focus(); if (target.includes('#') && 'navigate' in w) { try { await w.navigate(target); } catch { } } return; } }
+    if (self.clients.openWindow) await self.clients.openWindow(target);
   })());
 });

@@ -14,6 +14,7 @@
   const KEY = QS.get('k') || '';
   // Local preview without a database (only on this computer).
   const DEMO = QS.get('demo') === '1' && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+  const SAMPLE = DEMO && QS.get('sample') === '1'; // preview filled with made-up data (local only)
   const LB_KG = 0.45359237, DAY = 86400000;
   const APP_VERSION = ((document.querySelector('script[src^="app.js"]')?.getAttribute('src') || '').match(/v=(\d+)/) || [])[1] || '0';
 
@@ -26,7 +27,7 @@
     search: '', muscle: null, exMetric: 'heaviest', profMetric: 'workouts', rMetric: 'volume',
     calMonth: firstOfMonth(Date.now()), routinesOpen: true,
     progId: null, progWorkout: 'A', progWeek: null, progMode: 'week',
-    meals: [], mDate: null, thumbs: {}, images: {}
+    meals: [], saved_meals: [], mDate: null, thumbs: {}, images: {}
   };
 
   // ---------- helpers ----------
@@ -129,7 +130,7 @@
 
   // ---------- data: Supabase + offline outbox + undo ----------
   // meal_photos is not a list table: photos are fetched only when a day is shown.
-  const TABLES = ['exercises', 'routines', 'workouts', 'programs', 'meals'];
+  const TABLES = ['exercises', 'routines', 'workouts', 'programs', 'meals', 'saved_meals'];
   const listOf = (t) => S[t];
   const setList = (t, arr) => { S[t] = arr; };
   const toRow = (t, obj) => { const data = clone(obj); delete data.id; return { id: obj.id, data }; };
@@ -140,9 +141,9 @@
     if (op.op === 'put') arr.push(fromRow(op.table, op.row));
     setList(op.table, arr);
   }
-  function saveCache() { ls.set('cf-cache', JSON.stringify({ exercises: S.exercises, routines: S.routines, workouts: S.workouts, programs: S.programs, meals: S.meals, at: Date.now() })); }
+  function saveCache() { ls.set('cf-cache', JSON.stringify({ exercises: S.exercises, routines: S.routines, workouts: S.workouts, programs: S.programs, meals: S.meals, saved_meals: S.saved_meals, at: Date.now() })); }
   function loadCache() {
-    try { const c = JSON.parse(ls.get('cf-cache') || 'null'); if (c) { S.exercises = c.exercises || []; S.routines = c.routines || []; S.workouts = c.workouts || []; S.programs = c.programs || []; S.meals = c.meals || []; return true; } } catch { }
+    try { const c = JSON.parse(ls.get('cf-cache') || 'null'); if (c) { S.exercises = c.exercises || []; S.routines = c.routines || []; S.workouts = c.workouts || []; S.programs = c.programs || []; S.meals = c.meals || []; S.saved_meals = c.saved_meals || []; return true; } } catch { }
     return false;
   }
   const saveOutbox = () => ls.set('cf-outbox', JSON.stringify(S.outbox));
@@ -264,7 +265,7 @@
     else if (v.name === 'macros') node = macrosView();
     else if (v.name === 'settings') node = settingsView();
     else node = homeView();
-    const banner = S.offline ? h('div', { class: 'banner' },
+    const banner = SAMPLE ? h('div', { class: 'banner', style: 'margin-top:10px', text: 'Preview with sample data. Nothing here is saved online.' }) : S.offline ? h('div', { class: 'banner' },
       'No connection. Showing what is saved on this phone.',
       S.outbox.length ? ` ${S.outbox.length} change${S.outbox.length === 1 ? '' : 's'} will sync when you are back online.` : '') : null;
     $app.replaceChildren(...[banner, node].filter(Boolean));
@@ -436,8 +437,10 @@
     const hr = new Date().getHours();
     const hello = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
     const wk = startOfWeek(Date.now());
-    const n = list.filter(w => w.start >= wk).length;
-    const days = new Set(list.map(w => startOfDay(w.start)));
+    const act = activityMap();
+    const trainedDays = Object.keys(act).filter(k => act[k].w.length || act[k].s.length);
+    const n = trainedDays.filter(k => new Date(k + 'T00:00').getTime() >= wk).reduce((a, k) => a + act[k].w.length + act[k].s.length, 0);
+    const days = new Set(trainedDays.map(k => new Date(k + 'T00:00').getTime()));
     const today = startOfDay(Date.now());
     return h('div', null,
       topbar(h('a', { class: 'brand', href: '#' }, h('img', { src: 'logo-180.png', alt: 'CourtFit logo' }), h('span', null, h('b', { text: 'CourtFit' }), h('small', { text: 'Lift, log, glow' })))),
@@ -705,7 +708,7 @@
         h('button', { type: 'button', onclick: () => go('#exercises') }, icon('list'), 'Exercises'),
         h('button', { type: 'button', onclick: () => go('#settings') }, icon('gear'), 'Settings')),
       h('div', { class: 'tiles' },
-        tile('flame', 'Week streak', String(weekStreak(list))), tile('cal', 'This month', String(month)),
+        tile('flame', 'Week streak', String(streaks(activityMap()).weeks)), tile('cal', 'This month', String(month)),
         tile('weight', 'Total volume', fvol(list.reduce((a, w) => a + volumeOf(w), 0))), tile('clock', 'Total time', fmtDur(list.reduce((a, w) => a + durOf(w), 0)))),
       h('div', { class: 'panel', style: 'margin-top:12px' }, h('div', { class: 'hd' }, h('h2', { text: 'Last 12 weeks' })),
         h('div', { class: 'pills', style: 'margin:10px 0' }, pill('workouts', 'Workouts'), pill('minutes', 'Minutes'), pill('volume', 'Volume')),
@@ -713,7 +716,7 @@
       h('div', { class: 'panel' }, h('div', { class: 'hd' }, h('h2', { text: 'Muscle split' }), h('span', { class: 'muted', style: 'font-size:.8rem', text: 'Sets, last 30 days' })),
         split.length ? split.map(([m, c]) => h('div', { class: 'hbar', role: 'img', 'aria-label': `${m}: ${c} sets` }, h('span', { text: m }), h('span', { class: 'tr' }, h('i', { style: `width:${Math.max(4, c / top * 100)}%` })), h('b', { style: 'text-align:right', text: String(c) })))
           : h('p', { class: 'muted', text: 'No sets logged in the last 30 days.' })),
-      h('div', { class: 'panel' }, calendar(new Set(list.map(w => startOfDay(w.start))))));
+      h('div', { class: 'panel' }, h('div', { class: 'hd' }, h('h2', { text: 'Calendar' })), h('div', { style: 'margin-top:8px' }, calendar())));
   }
   function weekStreak(list) {
     const weeks = new Set(list.map(w => startOfWeek(w.start)));
@@ -721,21 +724,141 @@
     let n = 0; while (weeks.has(c)) { n++; c = addDays(c, -7); }
     return n;
   }
-  function calendar(days) {
+  // Everything logged, by day: workouts, StrongHER sessions (by each week's date) and macros.
+  function activityMap() {
+    const map = {};
+    const at = (iso) => (map[iso] = map[iso] || { w: [], s: [], m: [] });
+    for (const w of S.workouts) at(isoOf(new Date(w.start))).w.push(w);
+    for (const p of S.programs) for (const wk of p.workouts || []) {
+      ((p.log || {})[wk.key]?.weeks || []).forEach((x, i) => { if (x && x.date && weekHas(x)) at(x.date).s.push({ p, key: wk.key, phase: wk.phase, week: i }); });
+    }
+    for (const m of S.meals) if (m.date) at(m.date).m.push(m);
+    return map;
+  }
+  // Weeks in a row with a workout or StrongHER session; days in a row with food logged.
+  function streaks(map) {
+    const trainWeeks = new Set(Object.keys(map).filter(k => map[k].w.length || map[k].s.length).map(k => startOfWeek(new Date(k + 'T00:00').getTime())));
+    let c = startOfWeek(Date.now()); if (!trainWeeks.has(c)) c = addDays(c, -7);
+    let weeks = 0; while (trainWeeks.has(c)) { weeks++; c = addDays(c, -7); }
+    let d = todayISO(); if (!(map[d] && map[d].m.length)) d = shiftDay(d, -1);
+    let days = 0; while (map[d] && map[d].m.length) { days++; d = shiftDay(d, -1); }
+    return { weeks, days };
+  }
+  function calendar() {
+    const map = activityMap();
     const m = new Date(S.calMonth), y = m.getFullYear(), mo = m.getMonth();
-    const count = new Date(y, mo + 1, 0).getDate(), off = new Date(y, mo, 1).getDay(), today = startOfDay(Date.now());
+    const count = new Date(y, mo + 1, 0).getDate(), off = new Date(y, mo, 1).getDay(), today = todayISO();
     const shift = (d) => { const x = new Date(S.calMonth); x.setMonth(x.getMonth() + d); S.calMonth = x.getTime(); render(true); };
     const cells = [];
     for (let i = 0; i < 7; i++) cells.push(h('div', { class: 'wd', 'aria-hidden': 'true', text: new Date(2024, 0, 7 + i).toLocaleDateString(undefined, { weekday: 'narrow' }) }));
     for (let i = 0; i < off; i++) cells.push(h('div'));
-    for (let d = 1; d <= count; d++) { const t = new Date(y, mo, d).getTime(), on = days.has(t);
-      cells.push(h('div', { class: 'dy' + (on ? ' on' : '') + (t === today ? ' today' : ''), 'aria-label': fmtDate(t, { month: 'long', day: 'numeric' }) + (on ? ', workout logged' : ''), text: String(d) })); }
+    for (let d = 1; d <= count; d++) {
+      const iso = isoOf(new Date(y, mo, d)), a = map[iso] || { w: [], s: [], m: [] };
+      const trained = a.w.length || a.s.length;
+      const what = [a.w.length && 'workout', a.s.length && 'StrongHER', a.m.length && 'food logged'].filter(Boolean);
+      cells.push(h('button', { type: 'button', class: 'dy' + (trained ? ' on' : '') + (iso === today ? ' today' : ''), onclick: () => daySheet(iso, a),
+        'aria-label': fmtDate(new Date(iso + 'T00:00'), { month: 'long', day: 'numeric' }) + (what.length ? ': ' + what.join(', ') : '') },
+        h('span', { text: String(d) }),
+        h('span', { class: 'dots', 'aria-hidden': 'true' }, a.w.length ? h('i', { class: 'dw' }) : null, a.s.length ? h('i', { class: 'ds' }) : null, a.m.length ? h('i', { class: 'dm' }) : null)));
+    }
+    const st = streaks(map);
     return h('div', null,
       h('div', { style: 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px' },
         h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Previous month', onclick: () => shift(-1) }, icon('back')),
         h('b', { text: m.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) }),
         h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Next month', onclick: () => shift(1) }, icon('next'))),
-      h('div', { class: 'cal' }, cells));
+      h('div', { class: 'cal' }, cells),
+      h('div', { class: 'legend' }, h('span', null, h('i', { class: 'dw' }), 'Workout'), h('span', null, h('i', { class: 'ds' }), 'StrongHER'), h('span', null, h('i', { class: 'dm' }), 'Macros')),
+      h('div', { class: 'tally', style: 'margin-top:12px' },
+        h('div', null, h('span', { text: 'Training streak' }), h('b', { text: `${st.weeks} week${st.weeks === 1 ? '' : 's'}` })),
+        h('div', null, h('span', { text: 'Food log streak' }), h('b', { text: `${st.days} day${st.days === 1 ? '' : 's'}` })),
+        h('div', null, h('span', { text: 'Tap a day' }), h('b', { text: 'for details' }))));
+  }
+  function daySheet(iso, a) {
+    const t = totals(a.m), go2 = (fn) => { sh.close(); fn(); };
+    const sh = sheet(new Date(iso + 'T00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }), h('div', { class: 'stack' },
+      a.w.map(w => h('a', { class: 'card', href: '#w-' + w.id, onclick: () => sh.close() }, h('div', { class: 'eyebrow', text: 'Workout' }), h('h3', { text: w.name }), tally(w))),
+      a.s.map(x => h('button', { type: 'button', class: 'card', onclick: () => go2(() => { S.progId = x.p.id; S.progWorkout = x.key; S.progWeek = x.week; S.progMode = 'week'; go('#strongher'); }) },
+        h('div', { class: 'eyebrow', text: 'StrongHER' }), h('h3', { text: `Workout ${x.key} · ${x.phase || ''} — Week ${x.week + 1}` }), h('div', { class: 'meta', text: `Round ${x.p.round || ''}${x.p.theme ? ' · ' + x.p.theme : ''}` }))),
+      a.m.length ? h('button', { type: 'button', class: 'card', onclick: () => go2(() => { S.mDate = iso; go('#macros'); }) },
+        h('div', { class: 'eyebrow', text: 'Macros' }), h('h3', { text: `${Math.round(t.cal).toLocaleString()} kcal · ${a.m.length} food${a.m.length === 1 ? '' : 's'}` }),
+        h('div', { class: 'meta', text: `Protein ${Math.round(t.p)} g · Carbs ${Math.round(t.c)} g · Fat ${Math.round(t.f)} g` })) : null,
+      !a.w.length && !a.s.length && !a.m.length ? h('p', { class: 'muted', text: 'Nothing logged this day.' }) : null));
+  }
+
+  // ---------- reminders (web push, sent by the courtfit-remind server function) ----------
+  const REMIND_DEFAULT = { enabled: false, workoutOn: true, workoutDays: [1, 3, 5], workoutTime: '17:30',
+    meals: { Breakfast: { on: false, time: '09:00' }, Lunch: { on: true, time: '12:30' }, Dinner: { on: true, time: '19:00' } } };
+  function remindPrefs() {
+    let p = {}; try { p = JSON.parse(ls.get('cf-remind') || '{}'); } catch { }
+    return { ...clone(REMIND_DEFAULT), ...p, meals: { ...clone(REMIND_DEFAULT.meals), ...(p.meals || {}) } };
+  }
+  const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const deviceId = () => { let d = ls.get('cf-device'); if (!d) { d = Math.random().toString(36).slice(2, 10); ls.set('cf-device', d); } return d; };
+  function b64urlBytes(s) { const p = '='.repeat((4 - s.length % 4) % 4); const b = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(b, c => c.charCodeAt(0)); }
+  async function saveReminders(prefs) {
+    ls.set('cf-remind', JSON.stringify(prefs));
+    if (DEMO) { toast(prefs.enabled ? 'Preview: reminders would turn on here' : 'Reminders off'); return; }
+    if (!S.sb) throw new Error('No connection. Try again when you are online.');
+    if (!prefs.enabled) {
+      await S.sb.from('push_subs').update({ enabled: false, prefs }).eq('id', deviceId());
+      try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub) await sub.unsubscribe(); } catch { }
+      toast('Reminders off'); return;
+    }
+    const { data: vapid, error: ve } = await S.sb.rpc('courtfit_vapid_public');
+    if (ve || !vapid) throw new Error('Reminders are still being set up. Try again in a few minutes.');
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') throw new Error('Notifications are blocked. Allow them for CourtFit in iPhone Settings → Notifications.');
+    const reg = await navigator.serviceWorker.ready;
+    const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlBytes(vapid) });
+    const { error } = await S.sb.from('push_subs').upsert({ id: deviceId(), sub: sub.toJSON(), prefs, name: S.myName, enabled: true,
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Chicago', updated_at: new Date().toISOString() });
+    if (error) throw error;
+    toast('Reminders on 💖');
+  }
+  function remindersPanel() {
+    const p = remindPrefs();
+    const DAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    let note = null;
+    if (DEMO) note = 'Preview: reminders switch on after you approve this update.';
+    else if (!pushSupported() || (ios && !standalone())) note = 'To get reminders on iPhone, add CourtFit to your Home Screen and open it from the icon.';
+    const body = h('div', { class: 'fgrid', style: 'margin-top:12px' });
+    function draw() {
+      const toggle = (on, label, onch) => h('label', { class: 'switchrow' }, h('span', { text: label }),
+        h('input', { type: 'checkbox', role: 'switch', checked: on, onchange: (e) => { onch(e.target.checked); draw(); } }));
+      body.replaceChildren(...[
+        toggle(p.enabled, 'Reminders', (v) => { p.enabled = v; }),
+        p.enabled ? [
+          h('div', { class: 'rem' },
+            toggle(p.workoutOn, 'Workout reminder', (v) => { p.workoutOn = v; }),
+            p.workoutOn ? h('div', { class: 'fgrid', style: 'gap:10px' },
+              h('div', { class: 'daypick', role: 'group', 'aria-label': 'Workout days' }, DAYS.map((d, i) => h('button', { type: 'button', 'aria-pressed': String(p.workoutDays.includes(i)),
+                'aria-label': new Date(2024, 0, 7 + i).toLocaleDateString(undefined, { weekday: 'long' }),
+                onclick: () => { p.workoutDays = p.workoutDays.includes(i) ? p.workoutDays.filter(x => x !== i) : [...p.workoutDays, i].sort(); draw(); } }, d))),
+              field('Time', h('input', { type: 'time', value: p.workoutTime, onchange: (e) => { p.workoutTime = e.target.value; } })),
+              h('p', { class: 'muted', style: 'margin:0;font-size:.78rem', text: 'Skipped on days you have already trained.' })) : null),
+          h('div', { class: 'rem' }, h('b', { style: 'font-size:.9rem', text: 'Log your food' }),
+            MEALS.slice(0, 3).map(mt => h('div', { class: 'mealrem' },
+              h('label', { class: 'switchrow', style: 'flex:1' }, h('span', { text: mt }), h('input', { type: 'checkbox', role: 'switch', checked: p.meals[mt].on, onchange: (e) => { p.meals[mt].on = e.target.checked; draw(); } })),
+              h('input', { type: 'time', value: p.meals[mt].time, disabled: !p.meals[mt].on, 'aria-label': `${mt} reminder time`, onchange: (e) => { p.meals[mt].time = e.target.value; } }))),
+            h('p', { class: 'muted', style: 'margin:0;font-size:.78rem', text: 'Skipped if that meal is already logged.' }))] : null,
+        h('button', { type: 'button', class: 'primary', disabled: !!note && !DEMO, onclick: async (e) => {
+          e.target.disabled = true;
+          try { await saveReminders(p); } catch (err) { toast(err.message || 'Could not save reminders'); } finally { e.target.disabled = false; }
+        } }, 'Save Reminders'),
+        p.enabled && !DEMO && !note ? h('button', { type: 'button', class: 'soft', onclick: async () => {
+          try {
+            const r = await fetch(CFG.supabaseUrl + '/functions/v1/courtfit-remind', { method: 'POST',
+              headers: { 'Content-Type': 'application/json', apikey: CFG.supabaseAnonKey, 'x-app-key': KEY }, body: JSON.stringify({ test: true, id: deviceId() }) });
+            const j = await r.json().catch(() => ({}));
+            toast(r.ok && j.sent ? 'Test sent. Check your notifications.' : (j.error || 'Could not send. Tap Save Reminders first.'));
+          } catch { toast('Could not reach the reminder service'); }
+        } }, 'Send test reminder') : null].flat(Infinity).filter(Boolean));
+    }
+    draw();
+    return h('div', { class: 'panel' }, h('div', { class: 'hd' }, h('h2', { text: 'Reminders' })),
+      note ? h('p', { class: 'banner', style: 'margin:10px 0 0', text: note }) : null, body);
   }
 
   // ---------- settings ----------
@@ -751,6 +874,7 @@
         field('Your name', nameIn),
         h('div', { class: 'f' }, h('span', { class: 'eyebrow', text: 'Weight unit' }), h('div', { class: 'seg' }, seg('cf-unit', 'lbs', 'Pounds (lbs)', unit()), seg('cf-unit', 'kg', 'Kilograms (kg)', unit()))),
         field('Default rest timer', rest)),
+      remindersPanel(),
       h('div', { class: 'panel' }, h('div', { class: 'hd' }, h('h2', { text: 'Your app link' })),
         h('p', { class: 'muted', style: 'margin:10px 0', text: 'Anyone with this link can open your workouts, so keep it private. Use it to open CourtFit on a new phone.' }),
         h('button', { type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(appUrl()); toast('Link copied'); } catch { toast('Copy the address from the address bar'); } } }, 'Copy app link')),
@@ -889,15 +1013,19 @@
         w.ex.map(ex => {
           const vals = (wk.v[ex.n] || []);
           const before = prev ? (prev.v[ex.n] || []) : [];
+          // Heaviest weight ever written for this exercise in earlier weeks (for the PR star).
+          const earlierBest = Math.max(0, ...L.weeks.slice(0, wi).flatMap(x => (x.v[ex.n] || []).map(nv)).filter(n => n != null));
+          const cue = shCue(L, ex, wi, p.unit || 'lb');
           return h('div', { class: 'pex' },
             h('div', { class: 'nm' }, h('span', { class: 'no', text: ex.n }), h('b', { text: ex.name })),
             ex.note ? h('div', { class: 'note', text: ex.note }) : null,
-            h('div', { class: 'boxes' }, ex.reps.map((r, si) => h('label', { class: 'box' }, h('span', { text: String(r) }),
-              h('input', { value: vals[si] || '', class: vals[si] ? 'filled' : '', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', maxlength: '6', enterkeyhint: 'next',
+            h('div', { class: 'boxes' }, ex.reps.map((r, si) => {
+              const mark = h('i', { class: 'mark', 'aria-hidden': 'true' });
+              const input = h('input', { value: vals[si] || '', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', maxlength: '6', enterkeyhint: 'next',
                 'aria-label': `${ex.name}, set ${si + 1}, ${r} reps, weight`, onfocus: (e) => e.target.select(),
                 oninput: (e) => {
                   const v = e.target.value.trim();
-                  e.target.classList.toggle('filled', !!v);
+                  paint(v);
                   if (v) progTyped = true;
                   editProg(q => {
                     const k = wlog(q, w.key).weeks[wi];
@@ -905,9 +1033,32 @@
                     a[si] = v; k.v[ex.n] = a;
                     if (v && !k.date) { k.date = todayISO(); dateIn.value = k.date; }
                   });
-                } })))),
-            before.some(x => x) ? h('div', { class: 'prevwk', text: `Week ${wi}: ${ex.reps.map((_, i) => before[i] || '–').join(' · ')}` }) : null);
+                } });
+              // ▲ = heavier than the same set last week; ★ = heaviest ever for this exercise.
+              function paint(v) {
+                const n = nv(v), b = nv(before[si]);
+                const pr = n != null && earlierBest > 0 && n > earlierBest;
+                const up = n != null && b != null && n > b;
+                input.className = (v ? 'filled' : '') + (up ? ' up' : '') + (pr ? ' pr' : '');
+                mark.textContent = pr ? '★ PR' : up ? '▲' : '';
+                mark.className = 'mark' + (pr ? ' pr' : up ? ' up' : '');
+              }
+              paint(vals[si] || '');
+              return h('label', { class: 'box' }, h('span', { text: String(r) }), input, mark);
+            })),
+            before.some(x => x) ? h('div', { class: 'prevwk', text: `Week ${wi}: ${ex.reps.map((_, i) => before[i] || '–').join(' · ')}` }) : null,
+            cue ? h('div', { class: 'cue' + (cue.up ? ' up' : '') }, icon(cue.up ? 'up' : 'repeat', 'ic sm'), h('span', { text: cue.text })) : null);
         })));
+  }
+  const nv = (x) => { const n = parseFloat(String(x ?? '').replace(',', '.')); return isFinite(n) ? n : null; };
+  // StrongHER cue: same numbers two weeks running means it's time to add a little weight
+  // ("Increase load when reps, range and control allow").
+  function shCue(L, ex, wi, unit) {
+    if (wi < 2) return null;
+    const a = (L.weeks[wi - 1].v[ex.n] || []).map(nv), b = (L.weeks[wi - 2].v[ex.n] || []).map(nv);
+    if (!a.length || a.some(x => x == null) || a.length !== b.length || a.some((x, i) => x !== b[i])) return null;
+    if (weekHas({ v: { [ex.n]: L.weeks[wi].v[ex.n] || [] } })) return null;
+    return { up: true, text: `Same weights 2 weeks in a row. If the reps felt controlled, try +${unit === 'kg' ? '2.5 kg' : '5 lb'} on your last set or two.` };
   }
 
   function programGrid(p, w, L) {
@@ -917,8 +1068,12 @@
         h('div', { class: 'muted', style: 'font-size:.65rem;margin-top:3px', text: wk.date ? fmtMD(wk.date) : ' ' }))))),
       h('tbody', null, w.ex.map(ex => h('tr', null,
         h('td', null, h('div', { style: 'font-weight:600', text: `${ex.n} ${ex.name}` }), h('div', { class: 'muted', style: 'font-size:.66rem', text: ex.reps.join(' / ') })),
-        L.weeks.map(wk => h('td', null, h('div', { class: 'cells' }, ex.reps.map((r, si) => { const v = (wk.v[ex.n] || [])[si] || ''; return h('i', { class: v ? 'f' : '', title: `${r} reps`, text: v || '·' }); }))))))))),
-      h('p', { class: 'muted', style: 'font-size:.75rem;margin:10px 0 0', text: 'Tap a week to fill it in. Scroll sideways to see every week.' }));
+        L.weeks.map((wk, wi) => h('td', null, h('div', { class: 'cells' }, ex.reps.map((r, si) => {
+          const v = (wk.v[ex.n] || [])[si] || '';
+          const n = nv(v), b = wi > 0 ? nv((L.weeks[wi - 1].v[ex.n] || [])[si]) : null;
+          return h('i', { class: (v ? 'f' : '') + (n != null && b != null && n > b ? ' up' : ''), title: `${r} reps`, text: v || '·' });
+        }))))))))),
+      h('p', { class: 'muted', style: 'font-size:.75rem;margin:10px 0 0', text: '▲ = heavier than the week before. Tap a week to fill it in; scroll sideways to see every week.' }));
   }
 
   function programMenu(p, w) {
@@ -1070,7 +1225,10 @@
       MEALS.map(mt => {
         const ms = list.filter(m => (m.meal || 'Snack') === mt);
         if (!ms.length) return null;
-        return [sectionhd(mt, h('span', { class: 'muted', style: 'font-size:.85rem', text: `${Math.round(totals(ms).cal).toLocaleString()} kcal` })), h('div', { class: 'cards' }, ms.map(mealCard))];
+        return [sectionhd(mt, h('span', { style: 'display:flex;align-items:center;gap:4px' },
+          h('span', { class: 'muted', style: 'font-size:.85rem', text: `${Math.round(totals(ms).cal).toLocaleString()} kcal` }),
+          h('button', { type: 'button', class: 'link', style: 'font-size:.85rem;padding:0 6px', 'aria-label': `Save ${mt} as a saved meal`, onclick: () => saveMealSheet(mt, ms) }, '♡ Save'))),
+          h('div', { class: 'cards' }, ms.map(mealCard))];
       }),
       list.length ? null : h('div', { class: 'empty', style: 'margin-top:14px' }, h('h2', { text: d === today ? 'Nothing logged yet today' : 'Nothing logged this day' }),
         h('p', { text: 'Snap a photo of your food and type in the macros from the label or your tracking app.' })),
@@ -1081,7 +1239,7 @@
     const left = Math.round(g.cal - t.cal);
     const pct = g.cal ? Math.min(1, t.cal / g.cal) : 0;
     const r = 46, C = 2 * Math.PI * r;
-    const ring = svgFrom(`<svg viewBox="0 0 110 110" class="ring" aria-hidden="true"><defs><linearGradient id="mring" x1="0" x2="1"><stop offset="0" stop-color="#ff5c9e"/><stop offset="1" stop-color="#c08cff"/></linearGradient></defs><circle cx="55" cy="55" r="${r}" fill="none" stroke="rgba(255,196,222,.1)" stroke-width="10"/><circle cx="55" cy="55" r="${r}" fill="none" stroke="url(#mring)" stroke-width="10" stroke-linecap="round" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C * (1 - pct)).toFixed(1)}" transform="rotate(-90 55 55)"/></svg>`);
+    const ring = svgFrom(`<svg viewBox="0 0 110 110" class="ring" aria-hidden="true"><defs><linearGradient id="mring" x1="0" x2="1"><stop offset="0" stop-color="#f490bb"/><stop offset="1" stop-color="#c9a3f0"/></linearGradient></defs><circle cx="55" cy="55" r="${r}" fill="none" stroke="rgba(214,120,165,.18)" stroke-width="10"/><circle cx="55" cy="55" r="${r}" fill="none" stroke="url(#mring)" stroke-width="10" stroke-linecap="round" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C * (1 - pct)).toFixed(1)}" transform="rotate(-90 55 55)"/></svg>`);
     const bar = (label, v, goal, cls) => h('div', { class: 'mbar', role: 'img', 'aria-label': `${label}: ${Math.round(v)} of ${goal} grams` },
       h('div', { class: 'mtop' }, h('span', { text: label }), h('b', { text: `${Math.round(v)} / ${goal} g` })),
       h('div', { class: 'tr' }, h('i', { class: cls, style: `width:${Math.min(100, goal ? v / goal * 100 : 0)}%` })));
@@ -1152,6 +1310,19 @@
         nameIn.value = d.name; calIn.value = d.cal; inputs.p.value = d.p; inputs.c.value = d.c; inputs.f.value = d.f; autoCal();
       } }, m.name)))) : null;
 
+    // Saved meals: one tap logs every food in it (to the meal picked above).
+    const savedList = [...S.saved_meals].sort((a, b) => (b.created || 0) - (a.created || 0));
+    const savedBox = !existing && savedList.length ? h('div', null,
+      h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px' },
+        h('span', { class: 'eyebrow', text: 'Saved meals' }), h('button', { type: 'button', class: 'link', style: 'font-size:.8rem;min-height:32px', onclick: manageSaved }, 'Edit')),
+      h('div', { class: 'recent' }, savedList.map(sm => h('button', { type: 'button', class: 'savedchip', onclick: async () => {
+        sh.close();
+        const base = date === todayISO() ? Date.now() : new Date(date + 'T12:00').getTime();
+        await action(`Logged "${sm.name}"`, async () => {
+          for (const [i, it] of (sm.items || []).entries()) await put('meals', { id: uid('m'), date, at: base + i, meal: d.meal, name: it.name || '', cal: numv(it.cal) > 0 ? numv(it.cal) : '', p: numv(it.p), c: numv(it.c), f: numv(it.f), notes: '', hasPhoto: false, by: S.myName });
+        });
+      } }, h('b', { text: sm.name }), h('small', { text: `${(sm.items || []).length} food${(sm.items || []).length === 1 ? '' : 's'} · ${Math.round(totals(sm.items || []).cal)} kcal` }))))) : null;
+
     const save = h('button', { type: 'button', class: 'primary small', text: 'Save', onclick: async () => {
       const hasPhoto = !!(d.photo || (existing && existing.hasPhoto && !d.removed));
       if (!d.name.trim() && !hasPhoto && !(numv(d.p) || numv(d.c) || numv(d.f) || numv(d.cal))) { toast('Add a photo, a name or some macros'); return; }
@@ -1166,7 +1337,7 @@
       render(true);
     } });
     const sh = sheet(existing ? 'Edit Food' : 'Add Food', h('div', { class: 'fgrid' },
-      zone, recentBox, segBox, field('Name', nameIn),
+      zone, segBox, savedBox, recentBox, field('Name', nameIn),
       h('div', { class: 'mgrid' }, field('Calories', calIn), field('Protein g', inputs.p), field('Carbs g', inputs.c), field('Fat g', inputs.f)),
       h('p', { class: 'muted', style: 'font-size:.78rem;margin:-6px 0 0', text: 'Leave calories blank to work them out from the macros.' }),
       field('Notes', h('textarea', { value: d.notes, placeholder: 'Optional', style: 'min-height:60px', oninput: (e) => { d.notes = e.target.value; } })),
@@ -1212,9 +1383,9 @@
     const max = niceMax(Math.max(g.cal, ...pts.map(p => p.y)));
     const bw = (W - L - R) / 7, sy = (y) => T + (1 - y / max) * (H - T - B);
     const svg = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Calories, last 7 days">
-      <defs><linearGradient id="mwk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff5c9e"/><stop offset="1" stop-color="#c08cff"/></linearGradient></defs>
+      <defs><linearGradient id="mwk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f490bb"/><stop offset="1" stop-color="#c9a3f0"/></linearGradient></defs>
       ${[0, max / 2, max].map(t => `<line class="grid" x1="${L}" x2="${W - R}" y1="${sy(t)}" y2="${sy(t)}"/><text x="${L - 5}" y="${sy(t) + 3.5}" text-anchor="end">${kfmt(t)}</text>`).join('')}
-      <line x1="${L}" x2="${W - R}" y1="${sy(g.cal)}" y2="${sy(g.cal)}" stroke="#ffb199" stroke-dasharray="4 4" stroke-width="1.5"/>
+      <line x1="${L}" x2="${W - R}" y1="${sy(g.cal)}" y2="${sy(g.cal)}" stroke="#ee9a7c" stroke-dasharray="4 4" stroke-width="1.5"/>
       ${pts.map((p, i) => { const hh = Math.max(0, H - B - sy(p.y)), x = L + i * bw + bw * .2;
         return `<rect x="${x}" y="${H - B - hh}" width="${bw * .6}" height="${hh}" rx="4" fill="url(#mwk)"><title>${Math.round(p.y)} kcal</title></rect><text x="${x + bw * .3}" y="${H - 6}" text-anchor="middle">${new Date(p.x).toLocaleDateString(undefined, { weekday: 'narrow' })}</text>`; }).join('')}</svg>`;
     return h('div', { class: 'panel', style: 'margin-top:16px' },
@@ -1224,6 +1395,31 @@
         h('div', null, h('span', { text: 'Avg calories' }), h('b', { text: logged.length ? avg('cal').toLocaleString() : '—' })),
         h('div', null, h('span', { text: 'Avg protein' }), h('b', { text: logged.length ? avg('p') + ' g' : '—' })),
         h('div', null, h('span', { text: 'Days logged' }), h('b', { text: `${logged.length} / 7` }))));
+  }
+
+  function saveMealSheet(mt, ms) {
+    const nameIn = h('input', { value: `My usual ${mt.toLowerCase()}`, autocomplete: 'off' });
+    const t = totals(ms);
+    const sh = sheet('Save as Saved Meal', h('form', { class: 'fgrid', onsubmit: async (e) => {
+      e.preventDefault();
+      const name = nameIn.value.trim(); if (!name) { nameIn.focus(); return; }
+      sh.close();
+      await action(`Saved "${name}"`, () => put('saved_meals', { id: uid('s'), name, meal: mt, created: Date.now(), by: S.myName,
+        items: ms.map(m => ({ name: m.name || 'Food', cal: numv(m.cal) > 0 ? numv(m.cal) : '', p: numv(m.p), c: numv(m.c), f: numv(m.f) })) }));
+    } },
+      field('Name', nameIn),
+      h('div', { class: 'sets' }, ms.map(m => h('div', { class: 'r', style: 'grid-template-columns:1fr auto' }, h('span', { text: m.name || 'Food' }), h('b', { text: `${Math.round(mealCal(m))} kcal` })))),
+      h('p', { class: 'muted', style: 'margin:0;font-size:.85rem', text: `Total ${Math.round(t.cal)} kcal · P ${Math.round(t.p)} · C ${Math.round(t.c)} · F ${Math.round(t.f)}. Next time, tap it in Add Food to log all of these at once.` }),
+      h('button', { class: 'primary big', type: 'submit', text: 'Save Meal' })));
+  }
+  function manageSaved() {
+    const box = h('div', { class: 'stack' });
+    const draw = () => box.replaceChildren(...(S.saved_meals.length ? [...S.saved_meals].sort((a, b) => (b.created || 0) - (a.created || 0)).map(sm => h('div', { class: 'rcard' },
+      h('div', { class: 'rtop' }, h('div', { style: 'flex:1;min-width:0' }, h('h3', { text: sm.name }), h('p', { text: (sm.items || []).map(i => i.name).join(', ') })),
+        h('button', { type: 'button', class: 'iconbtn danger', 'aria-label': `Delete ${sm.name}`, onclick: async () => { await action(`Deleted "${sm.name}"`, () => del('saved_meals', sm.id)); draw(); } }, icon('trash', 'ic sm')))))
+      : [h('p', { class: 'muted', text: 'No saved meals. Use ♡ Save next to a meal on the Macros page.' })]));
+    draw();
+    sheet('Saved Meals', box);
   }
 
   // Export: a CSV spreadsheet (opens in Numbers, Excel or Google Sheets). On iPhone this
@@ -1375,6 +1571,8 @@
   function exerciseCard(e, idx) {
     const w = S.active, ex = findEx(e.exerciseId);
     const prev = previousSets(e.exerciseId, w.id, isLive(w) ? null : w.start);
+    const histBest = Math.max(0, ...historyFor(e.exerciseId).filter(x => x.w.id !== w.id && (isLive(w) || x.w.start < w.start)).flatMap(x => doneSets(x.entry)).map(e1rm));
+    const cue = workoutCue(e, prev);
     const card = h('div', { class: 'panel' },
       h('div', { class: 'exhd' },
         h('a', { href: '#ex-' + e.exerciseId }, exLabel(ex), h('small', { text: ex ? ex.muscle : '' })),
@@ -1386,12 +1584,28 @@
             { label: 'Remove Exercise', icon: 'trash', danger: true, run: () => { w.exercises.splice(idx, 1); saveActive(); render(true); } }]);
         } }, icon('dots'))),
       h('textarea', { class: 'noteinput', rows: '1', placeholder: 'Notes', 'aria-label': 'Exercise notes', style: 'margin:6px 0 4px', value: e.notes || '', oninput: (ev) => { e.notes = ev.target.value; grow(ev.target); saveActive(); } }),
+      cue ? h('div', { class: 'cue' + (cue.up ? ' up' : '') }, icon(cue.up ? 'up' : 'repeat', 'ic sm'), h('span', { text: cue.text })) : null,
       h('div', { class: 'sethd', 'aria-hidden': 'true' }, h('span', { text: 'SET' }), h('span', { text: 'PREVIOUS' }), h('span', { text: unit().toUpperCase() }), h('span', { text: 'REPS' }), h('span', { text: '✓' })),
-      h('div', { class: 'stack', style: 'gap:6px' }, e.sets.map((s, si) => setRow(e, s, si, prev[si]))),
+      h('div', { class: 'stack', style: 'gap:6px' }, e.sets.map((s, si) => setRow(e, s, si, prev[si], histBest))),
       h('button', { type: 'button', class: 'soft', style: 'width:100%;margin-top:10px', onclick: () => { const l = e.sets[e.sets.length - 1]; e.sets.push(newSet(l?.weight, l?.reps, 'normal', l?.target)); saveActive(); render(true); } }, icon('plus', 'ic sm'), 'Add Set'));
     return card;
   }
-  function setRow(e, s, si, p) {
+  // Progress cue for an exercise, based on last time. With a rep range (from a routine),
+  // hitting the top of the range on every set suggests going up in weight.
+  function workoutCue(e, prev) {
+    if (!prev.length) return null;
+    const tops = e.sets.map(s => { const t = String(s.target || '').match(/\d+/g); return t ? Math.max(...t.map(Number)) : null; });
+    const heavy = Math.max(...prev.map(p => p.weight || 0));
+    const last = prev.map(p => `${fw(p.weight)}×${p.reps || 0}`).join(', ');
+    const hasRange = tops.some(t => t != null);
+    const hitTop = hasRange && prev.every((p, i) => { const t = tops[Math.min(i, tops.length - 1)] ?? tops.find(x => x != null); return (p.reps || 0) >= t; });
+    if (heavy > 0 && hitTop) return { up: true, text: `Last time ${last}. You hit the top of your rep range, so try ${fwu(heavy + (isKg() ? 2.5 / LB_KG : 5))}.` };
+    if (heavy > 0 && hasRange) return { up: false, text: `Last time ${last}. Stay at this weight until you reach the top of the rep range.` };
+    return { up: false, text: `Last time ${last}. Beat it with one more rep or a little more weight.` };
+  }
+  function setRow(e, s, si, p, histBest = 0) {
+    const better = !!(s.done && p && ((s.weight || 0) > (p.weight || 0) || ((s.weight || 0) === (p.weight || 0) && (s.reps || 0) > (p.reps || 0))));
+    const isPR = !!(s.done && histBest > 0 && e1rm(s) > histBest + 0.01);
     const label = setLabel(e.sets, si);
     const prevText = p ? `${fw(p.weight)} × ${p.reps || 0}` : '—';
     const wIn = h('input', { inputmode: 'decimal', enterkeyhint: 'next', autocomplete: 'off', 'aria-label': `Set ${label} weight in ${unit()}`, placeholder: p ? fw(p.weight) : '0', value: s.weight != null ? fw(s.weight) : '',
@@ -1400,11 +1614,12 @@
     const rIn = h('input', { inputmode: 'numeric', pattern: '[0-9]*', enterkeyhint: 'done', autocomplete: 'off', 'aria-label': `Set ${label} reps`, placeholder: s.target || (p ? String(p.reps || 0) : '0'), value: s.reps != null ? String(s.reps) : '',
       onfocus: (ev) => ev.target.select(),
       oninput: (ev) => { const v = parseInt(ev.target.value, 10); s.reps = isFinite(v) ? v : null; saveActive(); refreshTally(); } });
-    const row = h('div', { class: 'setrow' + (s.done ? ' done' : '') },
+    const row = h('div', { class: 'setrow' + (s.done ? ' done' : '') + (isPR ? ' pr' : '') },
+      isPR ? h('span', { class: 'prbadge', text: 'PR' }) : null,
       h('button', { type: 'button', class: 'sn ' + (s.kind || 'normal'), 'aria-label': `Set ${label} options`, onclick: () => actions('Set type', [
         ...[['normal', 'Normal Set'], ['warmup', 'Warm-up Set'], ['drop', 'Drop Set'], ['failure', 'Failure Set']].map(([k, l]) => ({ label: l, checked: (s.kind || 'normal') === k, run: () => { s.kind = k; saveActive(); render(true); } })),
         { label: 'Delete Set', icon: 'trash', danger: true, run: () => { e.sets.splice(si, 1); saveActive(); render(true); } }]) }, label),
-      h('span', { class: 'prev', text: prevText, 'aria-label': p ? 'Previous ' + prevText : 'No previous' }),
+      h('span', { class: 'prev' + (better ? ' up' : ''), text: better ? `▲${fw(p.weight)}×${p.reps || 0}` : prevText, 'aria-label': p ? `Previous ${prevText}${better ? ', you beat it' : ''}` : 'No previous' }),
       wIn, rIn,
       h('button', { type: 'button', class: 'ck', 'aria-pressed': String(!!s.done), 'aria-label': s.done ? 'Completed. Tap to undo' : 'Mark set complete', onclick: () => {
         if (s.done) { s.done = false; saveActive(); render(true); return; }
@@ -1550,13 +1765,13 @@
     const area = `${d} L${pts[pts.length - 1][0]},${H - B} L${pts[0][0]},${H - B} Z`;
     const ticks = [hi / 3, hi * 2 / 3, hi];
     return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Progress chart, latest ${num1(ys[ys.length - 1])}">
-      <defs><linearGradient id="${id}l" x1="0" x2="1"><stop offset="0" stop-color="#ff5c9e"/><stop offset="1" stop-color="#c08cff"/></linearGradient>
-      <linearGradient id="${id}a" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff5c9e" stop-opacity=".3"/><stop offset="1" stop-color="#ff5c9e" stop-opacity="0"/></linearGradient></defs>
+      <defs><linearGradient id="${id}l" x1="0" x2="1"><stop offset="0" stop-color="#f490bb"/><stop offset="1" stop-color="#c9a3f0"/></linearGradient>
+      <linearGradient id="${id}a" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f490bb" stop-opacity=".3"/><stop offset="1" stop-color="#f490bb" stop-opacity="0"/></linearGradient></defs>
       ${ticks.map(t => `<line class="grid" x1="${L}" x2="${W - R}" y1="${sy(t)}" y2="${sy(t)}"/><text x="${L - 6}" y="${sy(t) + 3.5}" text-anchor="end">${kfmt(t)}${suffix && t === hi ? ' ' + suffix : ''}</text>`).join('')}
       <line class="grid" x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}"/>
       <path d="${area}" fill="url(#${id}a)"/>
       <path d="${d}" fill="none" stroke="url(#${id}l)" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
-      ${pts.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="3.6" fill="#ff5c9e"/>`).join('')}
+      ${pts.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="3.6" fill="#e46fa5"/>`).join('')}
       <text x="${L}" y="${H - 6}">${fmtDate(x0, { month: 'short', day: 'numeric' })}</text>
       <text x="${W - R}" y="${H - 6}" text-anchor="end">${fmtDate(x1, { month: 'short', day: 'numeric' })}</text></svg>`;
   }
@@ -1565,11 +1780,102 @@
     const max = niceMax(Math.max(...points.map(p => p.y))), bw = (W - L - R) / points.length;
     const sy = (y) => T + (1 - y / max) * (H - T - B);
     return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Last 12 weeks">
-      <defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff5c9e"/><stop offset="1" stop-color="#c08cff"/></linearGradient></defs>
+      <defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f490bb"/><stop offset="1" stop-color="#c9a3f0"/></linearGradient></defs>
       ${[0, max / 2, max].map(t => `<line class="grid" x1="${L}" x2="${W - R}" y1="${sy(t)}" y2="${sy(t)}"/><text x="${L - 5}" y="${sy(t) + 3.5}" text-anchor="end">${kfmt(t)}</text>`).join('')}
       ${points.map((p, i) => { const hh = Math.max(0, H - B - sy(p.y)), x = L + i * bw + bw * .18;
         return `<rect x="${x}" y="${H - B - hh}" width="${bw * .64}" height="${hh}" rx="4" fill="url(#${id})"><title>${num1(p.y)}</title></rect>` +
           (i % 3 === 0 ? `<text x="${x + bw * .32}" y="${H - 6}" text-anchor="middle">${fmtDate(p.x, { month: 'short', day: 'numeric' })}</text>` : ''); }).join('')}</svg>`;
+  }
+
+  // ---------- sample data for the local preview (?demo=1&sample=1) ----------
+  function samplePhoto(hue, label) {
+    const c = document.createElement('canvas'); c.width = c.height = 640; const g = c.getContext('2d');
+    g.fillStyle = `hsl(${hue + 30} 35% 22%)`; g.fillRect(0, 0, 640, 640);
+    g.fillStyle = '#f4efe9'; g.beginPath(); g.arc(320, 320, 250, 0, 7); g.fill();
+    g.fillStyle = '#e6ded6'; g.beginPath(); g.arc(320, 320, 200, 0, 7); g.fill();
+    for (let i = 0; i < 7; i++) { g.fillStyle = `hsl(${hue + i * 18} 65% ${48 + (i % 3) * 8}%)`; g.beginPath(); g.ellipse(230 + (i % 3) * 90, 250 + Math.floor(i / 3) * 80, 62, 44, i, 0, 7); g.fill(); }
+    g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(0, 560, 640, 80); g.fillStyle = '#fff'; g.font = 'bold 34px sans-serif'; g.textAlign = 'center'; g.fillText(label, 320, 612);
+    const t = document.createElement('canvas'); t.width = t.height = 240; t.getContext('2d').drawImage(c, 0, 0, 240, 240);
+    return { thumb: t.toDataURL('image/jpeg', 0.75), image: c.toDataURL('image/jpeg', 0.8) };
+  }
+  function loadSample() {
+    const X = (n, eq) => window.courtfitExerciseId(n, eq);
+    S.exercises = (window.COURTFIT_LIBRARY || []).map(([name, equipment, muscle]) => ({ id: X(name, equipment), name, equipment, muscle }));
+    const range = (n, reps) => Array.from({ length: n }, () => ({ weight: null, reps }));
+    S.routines = [{ id: 'rsample', name: 'Glute Day 🍑', by: S.myName, created: 1, order: 0, items: [
+      { exerciseId: X('Hip Thrust', 'Barbell'), sets: range(3, '8-10') },
+      { exerciseId: X('Romanian Deadlift', 'Dumbbell'), sets: range(3, '10-12') },
+      { exerciseId: X('Hip Abduction', 'Machine'), sets: range(3, '12-15') }] }];
+    const today = startOfDay(Date.now());
+    const plan = [[16, 85, 8], [12, 90, 9], [8, 95, 9], [3, 95, 10]]; // days ago, weight, reps: last one hits the top of 8-10
+    S.workouts = plan.map(([ago, wt, reps], i) => {
+      const set = (w, r) => ({ weight: w, reps: r, done: true, kind: 'normal' });
+      return { id: 'wsample' + i, name: 'Glute Day 🍑', by: S.myName, routineId: 'rsample', start: today - ago * DAY + 17.5 * 3600000, end: today - ago * DAY + 18.3 * 3600000, notes: '',
+        exercises: [
+          { exerciseId: X('Hip Thrust', 'Barbell'), notes: '', sets: [set(wt, reps), set(wt, reps), set(wt, reps)] },
+          { exerciseId: X('Romanian Deadlift', 'Dumbbell'), notes: '', sets: [set(25 + i * 2.5, 10 + (i > 1 ? 1 : 0)), set(25 + i * 2.5, 10), set(25 + i * 2.5, 10)] },
+          { exerciseId: X('Hip Abduction', 'Machine'), notes: '', sets: [set(70 + i * 5, 15), set(70 + i * 5, 14), set(70 + i * 5, 12)] }] };
+    });
+    const p = clone(STRONGHER_R4);
+    const wkA = p.log.A.weeks, wkB = p.log.B.weeks;
+    wkA[0].date = shiftDay(todayISO(), -13); wkB[0].date = shiftDay(todayISO(), -11);
+    wkA[1] = { date: shiftDay(todayISO(), -6), v: { '1.1': ['15', '15', '20', '25'], '1.2': ['12', '15', '20', '20'], '2.1': ['15', '20', '25'], '2.2': ['20', '20', '25'],
+      '3.1': ['AW', 'AW', 'AW'], '3.2': ['AW', 'AW', 'AW'], '4.1': ['10', '12', '12'], '4.2': ['10', '10', '10'] } };
+    wkB[1] = { date: shiftDay(todayISO(), -4), v: { '1.1': ['12', '12', '15', '20'], '1.2': ['8', '8', '10', '10'], '2.1': ['—', '—', '—'], '2.2': ['—', '—', '—'],
+      '3.1': ['10', '10', '12'], '3.2': ['7', '7', '10'], '4.1': ['—', '—', '—'], '4.2': ['10', '10', '10'] } };
+    S.programs = [p];
+    const foods = [
+      ['Breakfast', 'Greek yogurt + berries', 20, 30, 6, 30], ['Breakfast', 'Eggs & toast', 22, 28, 16, 50],
+      ['Lunch', 'Chicken salad', 38, 18, 20, 120], ['Lunch', 'Turkey wrap', 32, 40, 14, 20],
+      ['Snack', 'Protein shake', 30, 8, 3, 200], ['Snack', 'Apple + peanut butter', 7, 28, 16, 0],
+      ['Dinner', 'Salmon, rice & greens', 40, 55, 18, 160], ['Dinner', 'Taco bowl', 35, 60, 22, 10]];
+    S.meals = []; S.thumbs = {}; S.images = {};
+    for (let ago = 9; ago >= 0; ago--) {
+      const date = shiftDay(todayISO(), -ago);
+      if (ago === 6) continue; // a missed day
+      const pick = ago === 0 ? [0, 2] : ago % 2 ? [0, 3, 4, 6] : [1, 2, 5, 7];
+      pick.forEach((fi, j) => {
+        const [meal, name, pr, cb, ft, hue] = foods[fi];
+        const id = `msample${ago}_${j}`;
+        const photo = j % 2 === 0;
+        S.meals.push({ id, date, at: new Date(date + 'T00:00').getTime() + (8 + j * 4) * 3600000, meal, name, cal: '', p: pr, c: cb, f: ft, notes: '', hasPhoto: photo, by: S.myName });
+        if (photo) { const ph = samplePhoto(hue, name); S.thumbs[id] = ph.thumb; S.images[id] = ph.image; }
+      });
+    }
+    S.saved_meals = [{ id: 'ssample', name: 'My usual breakfast', meal: 'Breakfast', created: 1, items: [
+      { name: 'Greek yogurt', cal: '', p: 17, c: 7, f: 0 }, { name: 'Blueberries', cal: '', p: 1, c: 21, f: 0 }, { name: 'Granola', cal: '', p: 3, c: 20, f: 6 }] }];
+  }
+
+  // Screenshot states for the local sample preview only (?demo=1&sample=1&shot=...).
+  function previewShot(shot) {
+    if (!shot) return;
+    const later = (fn) => setTimeout(fn, 300);
+    if (shot === 'active') {
+      S.active = null; saveActive();
+      startRoutine(S.routines[0]);
+      const s = S.active.exercises[0].sets[0]; s.weight = 100; s.reps = 10; s.done = true; saveActive();
+      S.view = { name: 'active' };
+    } else if (shot === 'shA2' || shot === 'shB3' || shot === 'shgrid') {
+      S.progWorkout = shot === 'shB3' ? 'B' : 'A'; S.progWeek = shot === 'shB3' ? 2 : 1; S.progMode = shot === 'shgrid' ? 'grid' : 'week';
+      S.view = { name: 'strongher' };
+      if (shot === 'shB3') later(() => { const el = [...document.querySelectorAll('.pex')][1]; if (el) window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 80); });
+    } else if (shot === 'macros') {
+      S.view = { name: 'macros' }; S.mDate = shiftDay(todayISO(), -1);
+    } else if (shot === 'addfood') {
+      S.view = { name: 'macros' }; later(() => mealSheet(null, todayISO()));
+    } else if (shot === 'calendar') {
+      S.view = { name: 'profile' };
+      later(() => { const p = [...document.querySelectorAll('.panel')].find(x => x.querySelector('.cal')); if (p) window.scrollTo(0, p.getBoundingClientRect().top + window.scrollY - 70); });
+    } else if (shot === 'day') {
+      S.view = { name: 'profile' };
+      later(() => { const iso = isoOf(new Date(S.workouts[S.workouts.length - 1].start)); daySheet(iso, activityMap()[iso]); });
+    } else if (shot === 'reminders') {
+      ls.set('cf-remind', JSON.stringify({ ...REMIND_DEFAULT, enabled: true }));
+      S.view = { name: 'settings' };
+      later(() => { const p = [...document.querySelectorAll('.panel')].find(x => x.innerText.startsWith('Reminders')); if (p) window.scrollTo(0, p.getBoundingClientRect().top + window.scrollY - 70); });
+    }
+    const hashFor = { active: 'active', strongher: 'strongher', macros: 'macros', profile: 'profile', settings: 'settings' };
+    history.replaceState(null, '', location.pathname + location.search + '#' + (hashFor[S.view.name] || ''));
   }
 
   // ---------- boot ----------
@@ -1626,6 +1932,13 @@
     loadActive();
     S.view = parseHash();
     S.myName = ls.get('cf-name') || '';
+    if (DEMO && SAMPLE) {
+      if (!S.myName) { S.myName = 'Court'; ls.set('cf-name', S.myName); }
+      ls.set('cf-first-log-shown', '1');
+      loadSample(); S.loaded = true;
+      previewShot(QS.get('shot'));
+      render(true); return;
+    }
     if (DEMO) {
       if (!loadCache()) { S.exercises = (window.COURTFIT_LIBRARY || []).map(([name, equipment, muscle]) => ({ id: window.courtfitExerciseId(name, equipment), name, equipment, muscle })); saveCache(); }
       if (!S.programs.length) { S.programs = [clone(STRONGHER_R4)]; saveCache(); }
