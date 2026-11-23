@@ -331,8 +331,16 @@ table.pg { border-collapse: separate; border-spacing: 0; font-size: .78rem; min-
 .badge .em { font-size: 1.7rem; line-height: 1; }
 .badge b { font-size: .74rem; line-height: 1.2; }
 .badge small { font-size: .7rem; color: var(--muted); }
-.badge.on { background: linear-gradient(160deg, #fff 0%, #fde7f1 100%); border-color: rgba(240, 130, 180, .35); box-shadow: 0 4px 14px rgba(200, 80, 138, .12); }
+.badge.on { background: #fde7f1; }
 .badge.on small { color: var(--pink); font-weight: 600; }
+.me { display: flex; gap: 16px; align-items: center; margin-bottom: 14px; }
+.me h2 { font-size: 1.4rem; }
+.statrow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.statrow > div { display: grid; gap: 2px; min-width: 0; }
+.statrow b { font: 800 1.15rem/1.15 var(--f-display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.statrow span { color: var(--muted); font-size: .78rem; }
+.mseg { margin: 14px 0 10px; gap: 4px; }
+.mseg button { padding: 6px 2px; font-size: .84rem; min-height: 44px; }
 .badge:not(.on) .em { filter: grayscale(1); opacity: .35; }
 .badge .bar { width: 80%; height: 4px; border-radius: 2px; background: var(--chip); overflow: hidden; }
 .badge .bar i { display: block; height: 100%; background: var(--grad); }
@@ -446,6 +454,11 @@ i.mp { background: #f7a3c7; } i.mc { background: #d3b8f5; } i.mf { background: #
 .kpad .kpk.go { background: var(--grad); color: var(--on-accent); }
 .kpad .kpk .ic { width: 24px; height: 24px; }
 body.kp-open #app { padding-bottom: 300px; }
+.kpad .kpwords { grid-column: 1 / -1; order: -1; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.kpad .kpwords[hidden] { display: none; }
+.kpad .kpk.wd { min-height: 46px; font: 700 1.05rem/1 var(--f-body); letter-spacing: .06em; background: var(--chip); color: var(--pink); }
+.box input[readonly] { cursor: pointer; caret-color: transparent; }
+.box input.kpon { border: 2px solid var(--pink); background: #fff; box-shadow: 0 0 0 3px rgba(240, 130, 180, .18); }
 @keyframes kpup { from { transform: translateY(100%); } to { transform: none; } }
 .setrow .ck { min-height: 38px; padding: 0; border: 0; border-radius: 9px; background: var(--chip); color: var(--muted); }
 .setrow .ck .ic { width: 20px; height: 20px; position: relative; z-index: 1; }
@@ -576,9 +589,9 @@ body.kp-open .toast { bottom: calc(310px + env(safe-area-inset-bottom, 0px)); }
 <div id="installslot"></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="config.js?v=15"></script>
-<script src="library.js?v=15"></script>
+<script src="config.js?v=16"></script>
+<script src="library.js?v=16"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
-<script src="app.js?v=15"></script>
+<script src="app.js?v=16"></script>
 </body>
 </html>

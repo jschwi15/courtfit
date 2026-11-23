@@ -578,7 +578,8 @@
     const list = achievements(), on = list.filter(a => a.on);
     // Earned first, then the closest ones still to go.
     const locked = list.filter(a => !a.on).sort((a, b) => b.have / b.need - a.have / a.need);
-    const shown = S.badgesAll ? [...on, ...locked] : [...on.slice(-6), ...locked.slice(0, Math.max(3, 6 - Math.min(on.length, 6)))];
+    // Collapsed: the latest badge she earned and the next two she's closest to.
+    const shown = S.badgesAll ? [...on, ...locked] : [...on.slice(-1), ...locked.slice(0, on.length ? 2 : 3)];
     const badge = (a) => h('div', { class: 'badge' + (a.on ? ' on' : ''), role: 'img', 'aria-label': `${a.name}${a.on ? ', earned' : `, ${a.have} of ${a.need}`}` },
       h('span', { class: 'em', 'aria-hidden': 'true', text: a.em }), h('b', { text: a.name }),
       a.on ? h('small', { text: 'Earned' }) : a.need > 1 ? [h('span', { class: 'bar' }, h('i', { style: `width:${Math.round(a.have / a.need * 100)}%` })), h('small', { text: `${a.have} / ${a.need}` })] : h('small', { text: 'Not yet' }));
@@ -824,25 +825,29 @@
     const top = split[0]?.[1] || 1;
     const tile = (ic, label, value) => h('div', { class: 'tile' }, h('span', { class: 'ti' }, icon(ic, 'ic sm')), h('b', { text: value }), h('span', { text: label }));
     const pill = (k, label) => h('button', { type: 'button', 'aria-pressed': String(S.profMetric === k), onclick: () => { S.profMetric = k; render(true); } }, label);
+    const streak = streaks(activityMap()).weeks;
+    // Order = what she opens Profile for: body progress first, then training, then the extras.
     return h('div', null,
-      topbar(h('h1', { text: 'Profile' }), h('span', { class: 'spacer' }), h('a', { class: 'btn iconbtn', href: '#settings', 'aria-label': 'Settings' }, icon('gear'))),
-      h('div', { style: 'display:flex;gap:16px;align-items:center;margin-bottom:16px' },
+      topbar(h('h1', { text: 'Profile' }), h('span', { class: 'spacer' }),
+        h('a', { class: 'btn iconbtn', href: '#exercises', 'aria-label': 'Exercises' }, icon('list')),
+        h('a', { class: 'btn iconbtn', href: '#settings', 'aria-label': 'Settings' }, icon('gear'))),
+      h('div', { class: 'me' },
         h('div', { class: 'avatar', 'aria-hidden': 'true', text: (S.myName || 'C').slice(0, 1).toUpperCase() }),
-        h('div', null, h('h2', { style: 'font-size:1.4rem', text: S.myName }), h('div', { class: 'muted', text: `${list.length} workout${list.length === 1 ? '' : 's'}` }))),
-      h('div', { class: 'duo', style: 'margin-bottom:12px' },
-        h('button', { type: 'button', onclick: () => go('#exercises') }, icon('list'), 'Exercises'),
-        h('button', { type: 'button', onclick: () => go('#settings') }, icon('gear'), 'Settings')),
-      h('div', { class: 'tiles' },
-        tile('flame', 'Week streak', String(streaks(activityMap()).weeks)), tile('cal', 'This month', String(month)),
-        tile('weight', 'Total volume', fvol(list.reduce((a, w) => a + volumeOf(w), 0))), tile('clock', 'Total time', fmtDur(list.reduce((a, w) => a + durOf(w), 0)))),
-      h('div', { style: 'margin-top:12px' }, scansPanel()),
+        h('div', null, h('h2', { text: S.myName }),
+          h('div', { class: 'muted', text: `${list.length} workout${list.length === 1 ? '' : 's'}` + (streak ? ` · ${streak}-week streak 🔥` : '') }))),
+      scansPanel(),
+      h('div', { class: 'panel' }, h('div', { class: 'hd' }, h('h2', { text: 'Training' })),
+        h('div', { class: 'statrow' },
+          h('div', null, h('b', { text: String(month) }), h('span', { text: 'This month' })),
+          h('div', null, h('b', { text: fvol(list.reduce((a, w) => a + volumeOf(w), 0)) }), h('span', { text: 'Total volume' })),
+          h('div', null, h('b', { text: fmtDur(list.reduce((a, w) => a + durOf(w), 0)) }), h('span', { text: 'Total time' }))),
+        h('div', { class: 'seg mseg', role: 'group', 'aria-label': 'Chart' }, pill('workouts', 'Workouts'), pill('minutes', 'Minutes'), pill('volume', 'Volume'), pill('muscles', 'Muscles')),
+        S.profMetric === 'muscles'
+          ? [h('p', { class: 'muted', style: 'font-size:.8rem;margin:0 0 4px', text: 'Sets per muscle, last 30 days' }),
+            split.length ? split.map(([m, c]) => h('div', { class: 'hbar', role: 'img', 'aria-label': `${m}: ${c} sets` }, h('span', { text: m }), h('span', { class: 'tr' }, h('i', { style: `width:${Math.max(4, c / top * 100)}%` })), h('b', { style: 'text-align:right', text: String(c) })))
+              : h('p', { class: 'muted', text: 'No sets logged in the last 30 days.' })]
+          : [h('p', { class: 'muted', style: 'font-size:.8rem;margin:0 0 4px', text: 'Last 12 weeks' }), svgFrom(barChart(weekly))]),
       achievementsPanel(),
-      h('div', { class: 'panel' }, h('div', { class: 'hd' }, h('h2', { text: 'Last 12 weeks' })),
-        h('div', { class: 'pills', style: 'margin:10px 0' }, pill('workouts', 'Workouts'), pill('minutes', 'Minutes'), pill('volume', 'Volume')),
-        svgFrom(barChart(weekly))),
-      h('div', { class: 'panel' }, h('div', { class: 'hd' }, h('h2', { text: 'Muscle split' }), h('span', { class: 'muted', style: 'font-size:.8rem', text: 'Sets, last 30 days' })),
-        split.length ? split.map(([m, c]) => h('div', { class: 'hbar', role: 'img', 'aria-label': `${m}: ${c} sets` }, h('span', { text: m }), h('span', { class: 'tr' }, h('i', { style: `width:${Math.max(4, c / top * 100)}%` })), h('b', { style: 'text-align:right', text: String(c) })))
-          : h('p', { class: 'muted', text: 'No sets logged in the last 30 days.' })),
       h('div', { class: 'panel' }, h('div', { class: 'hd' }, h('h2', { text: 'Calendar' })), h('div', { style: 'margin-top:8px' }, calendar())));
   }
   function weekStreak(list) {
@@ -1011,11 +1016,11 @@
             h('span', { class: 'hlast' }, h('span', { text: fmtDate(new Date(last.date + 'T12:00'), { month: 'short', day: 'numeric', year: '2-digit' }) }), h('b', { text: shown(last) }))),
           svgFrom(scanChart(rows.map(b => ({ y: val(b), label: shown(b), date: b.date })), color, f.label)));
       }).filter(Boolean);
-      body.replaceChildren(
-        h('div', { class: 'seg', role: 'group', 'aria-label': 'Which scans' },
-          h('button', { type: 'button', 'aria-pressed': String(mode === 'recent'), onclick: () => { mode = 'recent'; draw(); } }, 'Last 6 scans'),
-          h('button', { type: 'button', 'aria-pressed': String(mode === 'all'), onclick: () => { mode = 'all'; draw(); } }, `All ${all.length} scans`)),
-        ...(cards.length ? cards : [h('p', { class: 'muted', text: 'Add a scan to see your history.' })]));
+      // The Last 6 / All switch only matters once there are more than 6 scans.
+      const seg = all.length <= 6 ? null : h('div', { class: 'seg', role: 'group', 'aria-label': 'Which scans' },
+        h('button', { type: 'button', 'aria-pressed': String(mode === 'recent'), onclick: () => { mode = 'recent'; draw(); } }, 'Last 6 scans'),
+        h('button', { type: 'button', 'aria-pressed': String(mode === 'all'), onclick: () => { mode = 'all'; draw(); } }, `All ${all.length} scans`));
+      body.replaceChildren(...[seg, ...(cards.length ? cards : [h('p', { class: 'muted', text: 'Add a scan to see your history.' })])].filter(Boolean));
     };
     draw();
     sheet('InBody history', body, { tall: true });
@@ -1378,10 +1383,12 @@
             ex.note ? h('div', { class: 'note', text: ex.note }) : null,
             h('div', { class: 'boxes' }, ex.reps.map((r, si) => {
               const mark = h('i', { class: 'mark', 'aria-hidden': 'true' });
-              const input = h('input', { value: vals[si] || '', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', maxlength: '6', enterkeyhint: 'next',
-                'aria-label': `${ex.name}, set ${si + 1}, ${r} reps, weight`, onfocus: (e) => e.target.select(),
-                oninput: (e) => {
-                  const v = e.target.value.trim();
+              // Same number pad as the workout screen, plus BW / AW keys for the paper's words.
+              const input = h('input', { value: vals[si] || '', readonly: '', inputmode: 'none', autocomplete: 'off', 'data-kp': `sh-${ex.n}-${si}`,
+                'aria-label': `${ex.name}, set ${si + 1}, ${r} reps, weight` });
+              input._kp = { decimal: true, words: true, step: (p.unit || 'lb') === 'kg' ? 2.5 : 5, hint: () => nv(before[si]) || 0,
+                set: (t) => {
+                  const v = String(t).trim();
                   paint(v);
                   if (v) progTyped = true;
                   editProg(q => {
@@ -1390,13 +1397,15 @@
                     a[si] = v; k.v[ex.n] = a;
                     if (v && !k.date) { k.date = todayISO(); dateIn.value = k.date; }
                   });
-                } });
+                } };
+              input.addEventListener('pointerdown', (ev) => ev.preventDefault());
+              input.addEventListener('click', () => kpOpen(input));
               // ▲ = heavier than the same set last week; ★ = heaviest ever for this exercise.
               function paint(v) {
                 const n = nv(v), b = nv(before[si]);
                 const pr = n != null && earlierBest > 0 && n > earlierBest;
                 const up = n != null && b != null && n > b;
-                input.className = (v ? 'filled' : '') + (up ? ' up' : '') + (pr ? ' pr' : '');
+                input.classList.toggle('filled', !!v); input.classList.toggle('up', up); input.classList.toggle('pr', pr);
                 mark.textContent = pr ? '★ PR' : up ? '▲' : '';
                 mark.className = 'mark' + (pr ? ' pr' : up ? ' up' : '');
               }
@@ -2087,7 +2096,8 @@
       dig('1'), dig('2'), dig('3'), k(icon('kbdown'), kpClose, 'fn', 'Hide number pad'),
       dig('4'), dig('5'), dig('6'), k(icon('plus'), () => kpStep(1), 'fn', 'Increase'),
       dig('7'), dig('8'), dig('9'), k(icon('minus'), () => kpStep(-1), 'fn', 'Decrease'),
-      k('.', () => kpType('.'), 'dot', 'Decimal point'), dig('0'), k(icon('bksp'), kpBack, 'fn', 'Delete'), k(icon('next'), kpNext, 'go', 'Next box'));
+      k('.', () => kpType('.'), 'dot', 'Decimal point'), dig('0'), k(icon('bksp'), kpBack, 'fn', 'Delete'), k(icon('next'), kpNext, 'go', 'Next box'),
+      h('div', { class: 'kpwords' }, k('BW', () => kpWord('BW'), 'wd', 'BW, bodyweight'), k('AW', () => kpWord('AW'), 'wd', 'AW')));
     KP.pad.addEventListener('pointerdown', (ev) => ev.preventDefault());
     document.body.append(KP.pad);
     document.addEventListener('pointerdown', (ev) => {
@@ -2112,6 +2122,7 @@
     // Moving to another set: if the one she left has weight and reps, its countdown keeps going.
     inp.classList.add('kpon');
     KP.pad.querySelector('.dot').disabled = !inp._kp.decimal;
+    KP.pad.querySelector('.kpwords').hidden = !inp._kp.words;
     KP.pad.hidden = false; document.body.classList.add('kp-open');
     requestAnimationFrame(() => {
       // Measure where the pad will end up, not where its slide-up animation has it right now.
@@ -2132,7 +2143,7 @@
   function kpType(d) {
     if (!KP.inp) return;
     if (d === '.' && !KP.inp._kp.decimal) return;
-    let b = KP.fresh ? '' : KP.buf;
+    let b = KP.fresh || /[A-Z]/.test(KP.buf) ? '' : KP.buf; // a digit after BW/AW starts fresh
     KP.fresh = false;
     if (d === '.') { if (b.includes('.')) return; b = (b || '0') + '.'; }
     else if (b === '0') b = d;
@@ -2140,7 +2151,9 @@
     if (b.replace('.', '').length > 6) return;
     KP.buf = b; kpApply();
   }
-  function kpBack() { if (!KP.inp) return; KP.fresh = false; KP.buf = KP.buf.slice(0, -1); kpApply(); }
+  function kpBack() { if (!KP.inp) return; KP.fresh = false; KP.buf = /[A-Z]/.test(KP.buf) ? '' : KP.buf.slice(0, -1); kpApply(); }
+  // StrongHER words from the paper sheet: fill the box, then hop to the next one.
+  function kpWord(wd) { if (!KP.inp || !KP.inp._kp.words) return; KP.buf = wd; KP.fresh = true; kpApply(); kpNext(); }
   // + / − nudge from the current number, or from the gray hint if the box is empty.
   function kpStep(dir) {
     if (!KP.inp) return;
