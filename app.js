@@ -963,7 +963,12 @@
   function scansPanel() {
     const list = sortedScans(), last = list[list.length - 1], prev = list[list.length - 2];
     const metric = SCAN_FIELDS.find(f => f.k === S.scanMetric) || SCAN_FIELDS[3];
-    const pts = list.filter(b => has(b[metric.k])).map(b => ({ x: new Date(b.date + 'T12:00').getTime(), y: metric.mass ? disp(Number(b[metric.k])) : Number(b[metric.k]) }));
+    // Last 6 scans with this number, each dot labeled with its value and date (History has them all).
+    const pts = list.filter(b => has(b[metric.k])).slice(-6).map(b => {
+      const y = metric.mass ? disp(Number(b[metric.k])) : Number(b[metric.k]);
+      return { y, date: b.date, label: metric.mass ? y.toFixed(1) : scanNum(metric, b[metric.k]) };
+    });
+    const color = (SCAN_HISTORY.find(([k]) => k === metric.k) || [])[1] || 'p';
     if (last && last.hasPhoto) wantThumbs([last.id]);
     const pill = (f) => h('button', { type: 'button', 'aria-pressed': String(f.k === metric.k), onclick: () => { S.scanMetric = f.k; render(true); } }, f.short || f.label);
     return h('div', { class: 'panel' },
@@ -981,7 +986,7 @@
           return h('div', { class: 'scanstat' }, h('span', { text: f.short || f.label }), h('b', { text: scanVal(f, last[f.k]) }), dl ? h('small', { class: dl.cls, text: dl.text }) : null);
         })),
         list.length >= 2 ? [h('div', { class: 'pills', style: 'margin:14px 0 8px' }, SCAN_FIELDS.filter(f => ['weight', 'smm', 'pbf', 'bfm', 'score'].includes(f.k)).map(pill)),
-          pts.length >= 2 ? svgFrom(lineChart(pts, metric.mass ? unit() : metric.unit === '%' ? '%' : '', true)) : h('p', { class: 'muted', text: 'Add this number to two or more scans to see a chart.' })] : null,
+          pts.length >= 2 ? svgFrom(scanChart(pts, color, metric.label)) : h('p', { class: 'muted', text: 'Add this number to two or more scans to see a chart.' })] : null,
         h('div', { class: 'duo', style: 'margin-top:12px' },
           h('button', { type: 'button', class: 'soft', style: 'justify-content:center', onclick: scanHistory }, icon('chart', 'ic sm'), 'History'),
           h('button', { type: 'button', style: 'justify-content:center', onclick: scansList }, `All scans (${list.length})`))]);
