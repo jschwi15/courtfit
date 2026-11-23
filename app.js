@@ -918,22 +918,33 @@
 
   // ---------- InBody body scans ----------
   // body_scans rows: { date, weight, smm, bfm (masses stored in lb), pbf %, bmi, vfl, bmr kcal, score,
-  //   seg: { la, ra, tr, ll, rl } (lean mass in lb, optional), notes, hasPhoto }.
+  //   optional tbw/icw/ecw (lb), ecwr, smi, pa, seg: { la, ra, tr, ll, rl } (lean mass in lb), notes, hasPhoto }.
   // The printout photo is stored like meal photos (meal_photos table, same id as the scan).
   const SCAN_FIELDS = [
     { k: 'weight', label: 'Weight', mass: true, better: 0 },
     { k: 'smm', label: 'Skeletal Muscle Mass', short: 'Muscle', mass: true, better: 1 },
     { k: 'bfm', label: 'Body Fat Mass', short: 'Fat mass', mass: true, better: -1 },
-    { k: 'pbf', label: 'Percent Body Fat', short: 'Body fat', unit: '%', better: -1 },
-    { k: 'bmi', label: 'BMI', better: 0 },
+    { k: 'pbf', label: 'Percent Body Fat', short: 'Body fat', unit: '%', dec: 1, better: -1 },
+    { k: 'bmi', label: 'BMI', dec: 1, better: 0 },
     { k: 'vfl', label: 'Visceral Fat Level', short: 'Visceral fat', better: -1 },
     { k: 'bmr', label: 'Basal Metabolic Rate', short: 'BMR', unit: 'kcal', better: 0 },
-    { k: 'score', label: 'InBody Score', short: 'Score', better: 1 }
+    { k: 'score', label: 'InBody Score', short: 'Score', better: 1 },
+    // Extra numbers from the InBody app's History tab (optional when adding a scan).
+    { k: 'tbw', label: 'Total Body Water', short: 'Body water', mass: true, better: 0, extra: true },
+    { k: 'icw', label: 'Intracellular Water', short: 'ICW', mass: true, better: 0, extra: true },
+    { k: 'ecw', label: 'Extracellular Water', short: 'ECW', mass: true, better: 0, extra: true },
+    { k: 'ecwr', label: 'ECW Ratio', short: 'ECW ratio', dec: 3, better: -1, extra: true },
+    { k: 'smi', label: 'SMI', unit: 'kg/m²', dec: 1, better: 1, extra: true },
+    { k: 'pa', label: 'Whole Body Phase Angle', short: 'Phase angle', unit: '°', dec: 1, better: 1, extra: true }
   ];
+  // Order and colors of the History chart cards (pink = weight/fat, mint = muscle/water, slate = scores).
+  const SCAN_HISTORY = [['score', 's', 'Points'], ['bmr', 'p', 'kcal'], ['weight', 'p'], ['smm', 'g'], ['bfm', 'p'], ['bmi', 'p', 'kg/m²'], ['pbf', 'p', '%'],
+    ['vfl', 'p', 'Level'], ['tbw', 'g'], ['icw', 'g'], ['ecw', 'g'], ['ecwr', 'g'], ['smi', 's', 'kg/m²'], ['pa', 's', '°']];
+  const scanNum = (f, v) => f.dec ? Number(v).toFixed(f.dec) : num1(Number(v));
   const SEG = [['la', 'Left arm'], ['ra', 'Right arm'], ['tr', 'Trunk'], ['ll', 'Left leg'], ['rl', 'Right leg']];
   const sortedScans = () => [...S.body_scans].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.at || 0) - (b.at || 0)));
   const has = (v) => v !== '' && v != null && isFinite(Number(v));
-  const scanVal = (f, v) => !has(v) ? '—' : f.mass ? fwu(Number(v)) : `${num1(Number(v))}${f.unit ? (f.unit === '%' ? '%' : ' ' + f.unit) : ''}`;
+  const scanVal = (f, v) => !has(v) ? '—' : f.mass ? fwu(Number(v)) : `${scanNum(f, v)}${f.unit ? (f.unit === '%' || f.unit === '°' ? f.unit : ' ' + f.unit) : ''}`;
   function scanHeadline(b) {
     const parts = [has(b.weight) && fwu(b.weight), has(b.pbf) && `${num1(b.pbf)}% body fat`, has(b.smm) && `${fwu(b.smm)} muscle`].filter(Boolean);
     return parts.join(' · ') || 'Scan';
@@ -942,8 +953,9 @@
   function scanDelta(f, cur, prev) {
     if (!prev || !has(cur[f.k]) || !has(prev[f.k])) return null;
     const d = Number(cur[f.k]) - Number(prev[f.k]);
-    if (Math.abs(d) < 0.05) return { text: 'no change', cls: '' };
-    const shown = f.mass ? num1(disp(Math.abs(d))) + ' ' + unit() : num1(Math.abs(d)) + (f.unit === '%' ? '%' : '');
+    if (f.dec !== 3 && Math.abs(d) < 0.05) return { text: 'no change', cls: '' };
+    if (f.dec === 3 && Math.abs(d) < 0.0005) return { text: 'no change', cls: '' };
+    const shown = f.mass ? num1(disp(Math.abs(d))) + ' ' + unit() : (f.dec ? Math.abs(d).toFixed(f.dec) : num1(Math.abs(d))) + (f.unit === '%' ? '%' : '');
     const good = f.better === 0 ? null : (d > 0) === (f.better > 0);
     return { text: `${d > 0 ? '+' : '−'}${shown}`, cls: good == null ? '' : good ? 'good' : 'bad' };
   }
@@ -970,7 +982,63 @@
         })),
         list.length >= 2 ? [h('div', { class: 'pills', style: 'margin:14px 0 8px' }, SCAN_FIELDS.filter(f => ['weight', 'smm', 'pbf', 'bfm', 'score'].includes(f.k)).map(pill)),
           pts.length >= 2 ? svgFrom(lineChart(pts, metric.mass ? unit() : metric.unit === '%' ? '%' : '', true)) : h('p', { class: 'muted', text: 'Add this number to two or more scans to see a chart.' })] : null,
-        h('button', { type: 'button', class: 'link', onclick: scansList }, `All scans (${list.length})`)]);
+        h('div', { class: 'duo', style: 'margin-top:12px' },
+          h('button', { type: 'button', class: 'soft', style: 'justify-content:center', onclick: scanHistory }, icon('chart', 'ic sm'), 'History'),
+          h('button', { type: 'button', style: 'justify-content:center', onclick: scansList }, `All scans (${list.length})`))]);
+  }
+
+  // History: one chart card per stat, every scan labeled, so she can compare like the InBody app.
+  function scanHistory() {
+    const all = sortedScans();
+    let mode = 'recent';
+    const body = h('div', { class: 'stack' });
+    const draw = () => {
+      const list = mode === 'recent' ? all.slice(-6) : all;
+      const cards = SCAN_HISTORY.map(([k, color, tag]) => {
+        const f = SCAN_FIELDS.find(x => x.k === k);
+        const rows = list.filter(b => has(b[k]));
+        if (!rows.length) return null;
+        const last = rows[rows.length - 1];
+        const val = (b) => f.mass ? disp(Number(b[k])) : Number(b[k]);
+        const shown = (b) => f.mass ? val(b).toFixed(1) : scanNum(f, b[k]);
+        return h('div', { class: 'hcard' },
+          h('div', { class: 'hhd' }, h('h3', null, f.label, h('small', { text: ` (${f.mass ? unit() : tag || ''})`.replace(' ()', '') })),
+            h('span', { class: 'hlast' }, h('span', { text: fmtDate(new Date(last.date + 'T12:00'), { month: 'short', day: 'numeric', year: '2-digit' }) }), h('b', { text: shown(last) }))),
+          svgFrom(scanChart(rows.map(b => ({ y: val(b), label: shown(b), date: b.date })), color, f.label)));
+      }).filter(Boolean);
+      body.replaceChildren(
+        h('div', { class: 'seg', role: 'group', 'aria-label': 'Which scans' },
+          h('button', { type: 'button', 'aria-pressed': String(mode === 'recent'), onclick: () => { mode = 'recent'; draw(); } }, 'Last 6 scans'),
+          h('button', { type: 'button', 'aria-pressed': String(mode === 'all'), onclick: () => { mode = 'all'; draw(); } }, `All ${all.length} scans`)),
+        ...(cards.length ? cards : [h('p', { class: 'muted', text: 'Add a scan to see your history.' })]));
+    };
+    draw();
+    sheet('InBody history', body, { tall: true });
+  }
+  // Evenly spaced points with each value written above its dot and the date underneath.
+  function scanChart(pts, color, name) {
+    const n = pts.length, W = 340, H = 158, L = 26, R = 26, T = 30, B = 26;
+    const ys = pts.map(p => p.y), lo = Math.min(...ys), hi = Math.max(...ys), span = hi - lo || Math.max(Math.abs(hi) * 0.05, 1);
+    const sx = (i) => n === 1 ? W / 2 : L + i * (W - L - R) / (n - 1);
+    const sy = (y) => T + 8 + (1 - (y - lo) / span) * (H - T - B - 16) - (hi === lo ? (H - T - B - 16) / 2 : 0);
+    const xy = pts.map((p, i) => [sx(i), sy(p.y)]);
+    // Smooth curve through the points (Catmull-Rom turned into cubic Béziers).
+    let d = `M${xy[0][0].toFixed(1)},${xy[0][1].toFixed(1)}`;
+    for (let i = 0; i < n - 1; i++) {
+      const p0 = xy[i - 1] || xy[i], p1 = xy[i], p2 = xy[i + 1], p3 = xy[i + 2] || p2;
+      const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6], c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+      d += ` C${c1[0].toFixed(1)},${c1[1].toFixed(1)} ${c2[0].toFixed(1)},${c2[1].toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+    }
+    const lx = xy[n - 1][0];
+    const dateTxt = (iso, i) => { const dt = new Date(iso + 'T12:00'); return fmtDate(dt, i === 0 || dt.getMonth() === 0 ? { month: 'numeric', day: 'numeric', year: '2-digit' } : { month: 'numeric', day: 'numeric' }); };
+    const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    return `<svg class="hchart ${color}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(name)}: ${pts.map(p => esc(p.label)).join(', ')}">
+      ${[0, 1, 2, 3].map(i => `<line class="grid" x1="8" x2="${W - 8}" y1="${T + i * (H - T - B) / 3}" y2="${T + i * (H - T - B) / 3}"/>`).join('')}
+      <line class="now" x1="${lx}" x2="${lx}" y1="${T - 6}" y2="${H - B}"/>
+      ${n > 1 ? `<path class="ln" d="${d}"/>` : ''}
+      ${xy.map(([x, y], i) => `<circle class="dot" cx="${x}" cy="${y}" r="5"/><text class="v" x="${x}" y="${y - 10}" text-anchor="middle">${esc(pts[i].label)}</text>`).join('')}
+      ${xy.map(([x], i) => `<text class="dt" x="${x}" y="${H - 7}" text-anchor="middle">${esc(dateTxt(pts[i].date, i))}</text>`).join('')}
+    </svg>`;
   }
 
   function scansList() {
@@ -1055,7 +1123,11 @@
       field('Scan date', h('input', { type: 'date', value: d.date, max: todayISO(), onchange: (e) => { d.date = e.target.value; } })),
       h('p', { class: 'muted', style: 'margin:0;font-size:.8rem', text: `Copy the numbers from the printout. Weights in ${unit()}. Leave any blank.` }),
       h('div', { class: 'mgrid', style: 'grid-template-columns:repeat(2,minmax(0,1fr))' },
-        SCAN_FIELDS.map(f => numIn(vals, f.k, f.label + (f.mass ? ` (${unit()})` : f.unit ? ` (${f.unit})` : '')))),
+        SCAN_FIELDS.filter(f => !f.extra).map(f => numIn(vals, f.k, f.label + (f.mass ? ` (${unit()})` : f.unit ? ` (${f.unit})` : '')))),
+      h('details', { class: 'segbox', open: SCAN_FIELDS.some(f => f.extra && vals[f.k]) },
+        h('summary', null, 'Water, SMI & phase angle (optional)'),
+        h('div', { class: 'mgrid', style: 'grid-template-columns:repeat(2,minmax(0,1fr));margin-top:10px' },
+          SCAN_FIELDS.filter(f => f.extra).map(f => numIn(vals, f.k, f.label + (f.mass ? ` (${unit()})` : f.unit ? ` (${f.unit})` : ''))))),
       segBox,
       field('Notes', h('textarea', { value: d.notes, placeholder: 'Optional, e.g. scanned after breakfast', style: 'min-height:60px', oninput: (e) => { d.notes = e.target.value; } })),
       h('button', { type: 'button', class: 'primary big', onclick: () => save.click() }, existing ? 'Save Changes' : 'Save Scan')),

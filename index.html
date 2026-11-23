@@ -297,6 +297,20 @@ table.pg { border-collapse: separate; border-spacing: 0; font-size: .78rem; min-
 .scanstat small, .delta { font-size: .76rem; font-weight: 700; color: var(--muted); }
 .scanstat small.good, .delta.good { color: var(--good); }
 .scanstat small.bad, .delta.bad { color: var(--bad); }
+.hcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 12px 6px; }
+.hcard .hhd { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 0 4px; }
+.hcard h3 { margin: 0; font: 700 1rem/1.2 var(--f-display); color: var(--ink); }
+.hcard h3 small { font: 500 .8rem var(--f-body); color: var(--muted); }
+.hcard .hlast { display: inline-flex; gap: 8px; align-items: baseline; background: var(--raised); border-radius: 10px; padding: 5px 10px; font-size: .78rem; color: var(--muted); }
+.hcard .hlast b { font-size: .95rem; color: var(--ink); }
+.hchart { display: block; width: 100%; height: auto; margin-top: 4px; overflow: visible; }
+.hchart .grid { stroke: var(--line); stroke-width: 1; }
+.hchart .now { stroke: var(--muted); stroke-opacity: .45; stroke-dasharray: 4 4; }
+.hchart .ln { fill: none; stroke: #d9c9d2; stroke-width: 2.2; stroke-linecap: round; }
+.hchart .v { font: 700 11.5px var(--f-body); fill: var(--ink); }
+.hchart .dt { font: 500 10.5px var(--f-body); fill: var(--muted); }
+.hchart.p .dot { fill: #e8628f; } .hchart.g .dot { fill: #3fb68f; } .hchart.s .dot { fill: #7c86a2; }
+.hchart .dot { stroke: #fff; stroke-width: 2; }
 .segbox { background: var(--raised); border-radius: 14px; padding: 12px 14px; }
 .segbox summary { font-weight: 600; cursor: pointer; min-height: 28px; }
 .db { background: #57b7a0; }
@@ -558,9 +572,9 @@ body.kp-open #app { padding-bottom: 300px; }
 <div id="installslot"></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="config.js?v=12"></script>
-<script src="library.js?v=12"></script>
+<script src="config.js?v=13"></script>
+<script src="library.js?v=13"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
-<script src="app.js?v=12"></script>
+<script src="app.js?v=13"></script>
 </body>
 </html>
