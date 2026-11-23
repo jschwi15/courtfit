@@ -84,7 +84,7 @@
     clearTimeout(toastTimer);
     $toast.replaceChildren(...[h('span', { text: msg }), action ? h('button', { type: 'button', class: 'toastbtn', text: action.label, onclick: () => { $toast.hidden = true; action.run(); } }) : null].filter(Boolean));
     $toast.hidden = false;
-    toastTimer = setTimeout(() => { $toast.hidden = true; }, action ? 7000 : 2800);
+    toastTimer = setTimeout(() => { $toast.hidden = true; }, action ? 10000 : 2800);
   }
   function go(hash) { if (location.hash === hash || (hash === '' && !location.hash)) route(); else location.hash = hash; }
   function goBack(fallback) { if (history.length > 1) history.back(); else go(fallback || ''); }
@@ -1998,18 +1998,25 @@
       } }, icon('check'));
     // Once she has typed both weight and reps, the set ticks itself after a few seconds.
     // Each new keypress restarts the countdown; clearing a box stops it.
+    // A weight far from last time (under half or over 1.5x) looks like a typo, so it waits for her ✓.
+    const odd = () => hintW > 0 && s.weight != null && (s.weight < hintW * 0.5 || s.weight > hintW * 1.5);
+    if (!s.done && odd()) wIn.classList.add('odd');
     for (const el of [wIn, rIn]) {
       const set = el._kp.set;
       el._kp.set = (t) => {
         set(t);
-        if (!s.done && s.weight != null && s.reps != null) autoStart(s, complete, ck); else autoCancel(s, ck);
+        wIn.classList.toggle('odd', odd());
+        if (!s.done && s.weight != null && s.reps != null && !odd()) autoStart(s, complete, ck); else autoCancel(s, ck);
       };
     }
     const row = h('div', { class: 'setrow' + (s.done ? ' done' : '') + (isPR ? ' pr' : '') },
       isPR ? h('span', { class: 'prbadge', text: 'PR' }) : null,
       h('button', { type: 'button', class: 'sn ' + (s.kind || 'normal'), 'aria-label': `Set ${label} options`, onclick: () => actions('Set type', [
         ...[['normal', 'Normal Set'], ['warmup', 'Warm-up Set'], ['drop', 'Drop Set'], ['failure', 'Failure Set']].map(([k, l]) => ({ label: l, checked: (s.kind || 'normal') === k, run: () => { s.kind = k; saveActive(); render(true); } })),
-        { label: 'Delete Set', icon: 'trash', danger: true, run: () => { e.sets.splice(si, 1); saveActive(); render(true); } }]) }, label),
+        { label: 'Delete Set', icon: 'trash', danger: true, run: () => {
+          const gone = e.sets.splice(si, 1)[0]; saveActive(); render(true);
+          toast(`Set ${label} removed`, { label: 'Undo', run: () => { e.sets.splice(Math.min(si, e.sets.length), 0, gone); saveActive(); render(true); } });
+        } }]) }, label),
       h('span', { class: 'prev' + (better ? ' up' : ''), text: better ? `▲${fw(p.weight)}×${p.reps || 0}` : prevText, 'aria-label': p ? `Previous ${prevText}${better ? ', you beat it' : ''}` : 'No previous' }),
       wIn, rIn,
       ck);
@@ -2107,7 +2114,8 @@
     KP.pad.querySelector('.dot').disabled = !inp._kp.decimal;
     KP.pad.hidden = false; document.body.classList.add('kp-open');
     requestAnimationFrame(() => {
-      const r = inp.getBoundingClientRect(), top = KP.pad.getBoundingClientRect().top;
+      // Measure where the pad will end up, not where its slide-up animation has it right now.
+      const r = inp.getBoundingClientRect(), top = window.innerHeight - KP.pad.offsetHeight;
       if (r.bottom > top - 12) window.scrollBy({ top: r.bottom - top + 60, behavior: 'smooth' });
       else if (r.top < 70) window.scrollBy({ top: r.top - 90, behavior: 'smooth' });
     });
@@ -2158,7 +2166,9 @@
     autoFlush(); // sets still counting down count as done
     if (!setsOf(w).length) { actions('Nothing logged yet', [], 'Tap the ✓ on at least one set first.'); return; }
     if (!live && w.start > Date.now()) { toast('The date and time can’t be in the future'); return; }
-    if (!(await confirmBox(live ? 'Finish workout?' : 'Save workout?', "Sets you haven't checked off will be removed.", live ? 'Finish Workout' : 'Save Workout'))) return;
+    const left = w.exercises.reduce((n, e) => n + e.sets.filter(s => !s.done).length, 0);
+    const note = left ? `${left} set${left === 1 ? '' : 's'} you haven't checked off will be removed. Go back to tick ${left === 1 ? 'it' : 'them'} if you did ${left === 1 ? 'it' : 'them'}.` : 'Every set is checked off.';
+    if (!(await confirmBox(live ? 'Finish workout?' : 'Save workout?', note, live ? 'Finish Workout' : 'Save Workout'))) return;
     const end = live ? Date.now() : w.start + Math.max(1, w.durMin || 60) * 60000;
     const done = { id: w.id, name: (w.name || '').trim() || defaultName(), start: w.start, end, notes: w.notes || '', routineId: w.routineId || null, by: w.by || S.myName,
       exercises: w.exercises.map(e => ({ exerciseId: e.exerciseId, group: e.group || null, notes: e.notes || '', sets: doneSets(e).map(s => ({ weight: s.weight, reps: s.reps, kind: s.kind || 'normal', done: true })) })).filter(e => e.sets.length) };
